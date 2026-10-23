@@ -191,3 +191,30 @@ it("saves the paper note after typing stops", async () => {
     "Main contribution",
   );
 });
+
+it("shares the raw draft with the expanded editor and preserves it on close", async () => {
+  const expand = button("展开论文笔记");
+  expect(expand).toBeDefined();
+  await act(async () => expand.click());
+  const editor = document.querySelector<HTMLTextAreaElement>(
+    'textarea[aria-label="编辑论文笔记"]',
+  )!;
+  expect(editor).not.toBeNull();
+  const raw = "# My note\n\n[原文](reader://document/p)\n\n**bold**";
+  await act(async () => type(editor, raw));
+  expect(document.querySelector(".paper-note-preview h1")?.textContent).toBe(
+    "My note",
+  );
+  expect(document.querySelector(".paper-note-preview a")).toBeNull();
+  const close = document.querySelector<HTMLButtonElement>(
+    '[data-slot="dialog-close"]',
+  )!;
+  await act(async () => close.click());
+  await act(async () => vi.advanceTimersByTime(1000));
+  expect(
+    host.querySelector<HTMLTextAreaElement>('textarea[aria-label="论文笔记"]')
+      ?.value,
+  ).toBe(raw);
+  expect(api.saveDocumentNote).toHaveBeenLastCalledWith("p", raw);
+  expect(document.activeElement).toBe(expand);
+});
