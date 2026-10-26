@@ -25,7 +25,7 @@ import (
 
 const migrationKey = "reader-to-neoread"
 const migrationStage = ".reader-to-neoread"
-const migrationDigestVersion = 1
+const lastProfileDigestVersion = 1
 
 // Error classification is separate from messages, which may contain user paths.
 type migrationError struct {
@@ -39,12 +39,29 @@ func migrationErrorf(reason, format string, args ...any) error {
 	return &migrationError{reason: reason, err: fmt.Errorf(format, args...)}
 }
 
+func migrationFailureReason(failure error) string {
+	var classified *migrationError
+	switch {
+	case errors.As(failure, &classified):
+		return classified.reason
+	case errors.Is(failure, syscall.ENOSPC):
+		return "no_space"
+	case errors.Is(failure, os.ErrPermission):
+		return "permission_denied"
+	case errors.Is(failure, os.ErrNotExist):
+		return "not_found"
+	default:
+		return "operation_failed"
+	}
+}
+
 type LegacyCleanup struct {
 	Status string `json:"status"`
 }
 type ReaderMigration struct {
 	Status        string            `json:"status"`
 	DigestVersion int               `json:"digestVersion,omitempty"`
+	DataOnly      bool              `json:"dataOnly,omitempty"`
 	Reason        string            `json:"reason,omitempty"`
 	ID            string            `json:"id,omitempty"`
 	Source        string            `json:"source,omitempty"`
@@ -202,8 +219,8 @@ func lockOldLibrary(path string) (func(), error) {
 	return func() { _ = lock.Unlock() }, nil
 }
 
-// Runtime caches/locks are not user data. In particular Chromium's Singleton files
-// may be symlinks; never follow them into another process or copy its session lock.
+// Frozen hash rules for whole-profile journals written by 0.9.0/0.9.1.
+// New imports use businessExcluded; do not add Chromium directory names here.
 func migrationExcluded(rel string) bool {
 	first := strings.Split(filepath.ToSlash(rel), "/")[0]
 	switch first {
@@ -235,53 +252,95 @@ func (state *ReaderMigration) runtimeCache(rel string) bool {
 	return migrationRuntimeCache(rel) && !containsPath(filepath.Join(state.Source, first), state.SourceLibrary)
 }
 func (state *ReaderMigration) excluded(rel string) bool {
+	if state.DataOnly {
+		return state.businessExcluded(rel)
+	}
 	return migrationExcluded(rel) || (state.DigestVersion >= 1 && state.runtimeCache(rel))
 }
 func (state *ReaderMigration) treeDigest(root string) (string, int64, error) {
+	if state.DataOnly {
+		return state.businessDigest(root)
+	}
 	return treeDigestWithPolicy(root, state.excluded)
 }
 func treeDigestWithPolicy(root string, excluded func(string) bool) (string, int64, error) {
+	return treeDigestWithOverrides(root, excluded, nil)
+}
+
+// Overrides replace only top-level files in the historical view used by cleanup.
+// An empty path omits a newly created runtime file. The byte stream for all
+// ordinary files/directories is identical to the version-zero journal format.
+func treeDigestWithOverrides(root string, excluded func(string) bool, overrides map[string]string) (string, int64, error) {
 	hash := sha256.New()
 	var size int64
-	err := filepath.WalkDir(root, func(path string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		if excluded(rel) {
-			if e.IsDir() {
-				return filepath.SkipDir
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return "", 0, err
+	}
+	names := map[string]bool{}
+	for _, entry := range entries {
+		names[entry.Name()] = true
+	}
+	for name := range overrides {
+		names[name] = true
+	}
+	ordered := make([]string, 0, len(names))
+	for name := range names {
+		ordered = append(ordered, name)
+	}
+	sort.Strings(ordered)
+	for _, name := range ordered {
+		entryRoot := filepath.Join(root, name)
+		if replacement, ok := overrides[name]; ok {
+			if replacement == "" {
+				continue
 			}
-			return nil
+			entryRoot = replacement
 		}
-		info, err := e.Info()
-		if err != nil {
+		err = filepath.WalkDir(entryRoot, func(path string, e fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			suffix, err := filepath.Rel(entryRoot, path)
+			if err != nil {
+				return err
+			}
+			rel := name
+			if suffix != "." {
+				rel = filepath.Join(name, suffix)
+			}
+			if excluded(rel) {
+				if e.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			info, err := e.Info()
+			if err != nil {
+				return err
+			}
+			if info.IsDir() {
+				fmt.Fprintf(hash, "d:%s\x00", rel)
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("数据目录包含链接或特殊文件：%s", rel)
+			}
+			fmt.Fprintf(hash, "f:%s:%d\x00", rel, info.Size())
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			_, err = io.Copy(hash, f)
+			f.Close()
+			size += info.Size()
 			return err
-		}
-		if info.IsDir() {
-			fmt.Fprintf(hash, "d:%s\x00", rel)
-			return nil
-		}
-		if !info.Mode().IsRegular() {
-			return fmt.Errorf("数据目录包含链接或特殊文件：%s", rel)
-		}
-		fmt.Fprintf(hash, "f:%s:%d\x00", rel, info.Size())
-		f, err := os.Open(path)
+		})
 		if err != nil {
-			return err
+			return "", size, err
 		}
-		_, err = io.Copy(hash, f)
-		f.Close()
-		size += info.Size()
-		return err
-	})
-	return hex.EncodeToString(hash.Sum(nil)), size, err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), size, nil
 }
 func copyMigrationTree(source, target string, excluded func(string) bool) error {
 	if err := os.Mkdir(target, 0700); err != nil {
@@ -436,7 +495,7 @@ func externalStage(state *ReaderMigration) string {
 	return filepath.Join(filepath.Dir(state.Library), ".neoread-migration-"+state.ID)
 }
 func validateMigrationState(source, target string, state *ReaderMigration) error {
-	if state.DigestVersion < 0 || state.DigestVersion > migrationDigestVersion {
+	if state.DigestVersion < 0 || state.DigestVersion > lastProfileDigestVersion {
 		return migrationErrorf("invalid_record", "不支持的迁移校验版本")
 	}
 	if state.Source != source || !regexp.MustCompile(`^[0-9a-f]{32}$`).MatchString(state.ID) {
@@ -492,7 +551,11 @@ func validateMigrationState(source, target string, state *ReaderMigration) error
 		}
 	}
 	for name := range state.Entries {
-		if name == "." || name == ".." || filepath.Base(name) != name || state.excluded(name) {
+		if state.DataOnly {
+			if _, allowed := state.dataPaths()[name]; !allowed {
+				return migrationErrorf("invalid_record", "迁移条目不属于业务数据")
+			}
+		} else if name == "." || name == ".." || filepath.Base(name) != name || state.excluded(name) {
 			return migrationErrorf("invalid_record", "迁移条目无效")
 		}
 	}
@@ -508,18 +571,7 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 	stageEvent(phase)
 	defer func() {
 		if failure != nil {
-			reason := "operation_failed"
-			var classified *migrationError
-			switch {
-			case errors.As(failure, &classified):
-				reason = classified.reason
-			case errors.Is(failure, syscall.ENOSPC):
-				reason = "no_space"
-			case errors.Is(failure, os.ErrPermission):
-				reason = "permission_denied"
-			case errors.Is(failure, os.ErrNotExist):
-				reason = "not_found"
-			}
+			reason := migrationFailureReason(failure)
 			slog.Error("migration.failed", "phase", phase, "reasonCode", reason, "durationMs", time.Since(started).Milliseconds())
 		} else {
 			slog.Info("migration.finish", "status", result.Status, "durationMs", time.Since(started).Milliseconds())
@@ -590,7 +642,7 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 		if _, err = rand.Read(id); err != nil {
 			return nil, err
 		}
-		state = &ReaderMigration{Status: "copying", ID: hex.EncodeToString(id), Source: source, SourceLibrary: lib, External: !containsPath(source, lib)}
+		state = &ReaderMigration{Status: "copying", DataOnly: true, ID: hex.EncodeToString(id), Source: source, SourceLibrary: lib, External: !containsPath(source, lib)}
 		if state.External {
 			state.Library = filepath.Join(filepath.Dir(lib), "NeoRead Library")
 		} else {
@@ -614,6 +666,9 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 	if err != nil {
 		return nil, err
 	}
+	if err = state.checkDataPaths(); err != nil {
+		return nil, err
+	}
 	stageEvent("lock_source")
 	unlock, err := lockReaderLibraries(source, state.SourceLibrary)
 	if err != nil {
@@ -622,7 +677,8 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 	defer unlock()
 	stage := filepath.Join(target, migrationStage)
 	if state.Status == "copying" {
-		state.DigestVersion = migrationDigestVersion
+		state.DataOnly = true
+		state.DigestVersion = 0
 		// These exact staging locations belong to the journal. Never remove the final
 		// target or any directory merely because its name resembles a staging path.
 		if pathExists(stage) {
@@ -679,7 +735,7 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 			if err = os.WriteFile(filepath.Join(ext, "owner"), []byte(state.ID), 0600); err != nil {
 				return nil, err
 			}
-			before, libraryBytes, err := treeDigest(state.SourceLibrary)
+			before, libraryBytes, err := state.libraryDigest(state.SourceLibrary)
 			if err != nil {
 				return nil, err
 			}
@@ -687,10 +743,10 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 				return nil, err
 			}
 			copiedLib = filepath.Join(ext, "library")
-			if err = copyMigrationTree(state.SourceLibrary, copiedLib, migrationExcluded); err != nil {
+			if err = copyMigrationTree(state.SourceLibrary, copiedLib, state.libraryExcluded); err != nil {
 				return nil, err
 			}
-			after, _, err := treeDigest(copiedLib)
+			after, _, err := state.libraryDigest(copiedLib)
 			if err != nil {
 				return nil, err
 			}
@@ -724,22 +780,22 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 			}
 		}
 		if state.External {
-			state.ExternalHash, _, err = treeDigest(copiedLib)
+			state.ExternalHash, _, err = state.libraryDigest(copiedLib)
 			if err != nil {
 				return nil, err
 			}
 		}
 		state.Entries = map[string]string{}
-		entries, err := os.ReadDir(filepath.Join(stage, "app"))
-		if err != nil {
-			return nil, err
-		}
-		for _, entry := range entries {
-			h, err := digestEntry(filepath.Join(stage, "app", entry.Name()))
+		for _, name := range sortedDataPaths(state.dataPaths()) {
+			path := filepath.Join(stage, "app", name)
+			if !pathExists(path) {
+				continue
+			}
+			hash, err := digestBusinessEntry(path)
 			if err != nil {
 				return nil, err
 			}
-			state.Entries[entry.Name()] = h
+			state.Entries[name] = hash
 		}
 		if err = syncMigrationTree(stage); err != nil {
 			return nil, err
@@ -771,7 +827,7 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 				return nil, err
 			}
 		}
-		hash, _, err := treeDigest(state.Library)
+		hash, _, err := state.libraryDigest(state.Library)
 		if err != nil {
 			return nil, err
 		}
@@ -785,35 +841,24 @@ func MigrateReaderData(source, target string) (result *ReaderMigration, failure 
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		// Old journals can have caches staged, already changed by Chromium, or
-		// removed. Never move or verify live caches during activation recovery.
-		if state.runtimeCache(name) {
+		// Old verified journals can include the entire Chromium profile. Only
+		// entries that contain selected business data participate in recovery.
+		if state.businessExcluded(name) {
 			continue
 		}
 		from, to := filepath.Join(stage, "app", name), filepath.Join(target, name)
 		if pathExists(from) {
 			if pathExists(to) {
-				switch name {
-				case "Local State", "Preferences", "Network", "Session Storage", "Local Storage", "logs":
-				default:
-					return nil, migrationErrorf("target_conflict", "迁移目标出现已有数据，未覆盖：%s", to)
-				}
-				backup := filepath.Join(stage, "initial", name)
-				if pathExists(backup) {
-					return nil, migrationErrorf("target_conflict", "目标数据发生变化，未覆盖：%s", name)
-				}
-				if err = os.MkdirAll(filepath.Dir(backup), 0700); err != nil {
-					return nil, err
-				}
-				if err = os.Rename(to, backup); err != nil {
-					return nil, err
-				}
+				return nil, migrationErrorf("target_conflict", "迁移目标出现已有业务数据，未覆盖：%s", to)
+			}
+			if err = os.MkdirAll(filepath.Dir(to), 0700); err != nil {
+				return nil, err
 			}
 			if err = os.Rename(from, to); err != nil {
 				return nil, err
 			}
 		}
-		hash, err := digestEntry(to)
+		hash, err := state.activationDigest(to)
 		if err != nil {
 			return nil, err
 		}
@@ -849,6 +894,33 @@ func checkStageOwner(path, id string) error {
 // CleanupReaderData never finds/uninstalls apps and never deletes external
 // libraries. Only the exact source recorded by a completed migration is eligible.
 func CleanupReaderData(source, target, choice string) (*ReaderMigration, error) {
+	return cleanupReaderData(source, target, choice, false)
+}
+
+// RetryReaderCleanup requires a new explicit deletion request. Startup never
+// calls it, and a previous decision to keep data is not a failed cleanup.
+func RetryReaderCleanup(source, target string) (*ReaderMigration, error) {
+	return cleanupReaderData(source, target, "delete", true)
+}
+
+func cleanupReaderData(source, target, choice string, retry bool) (result *ReaderMigration, failure error) {
+	started := time.Now()
+	phase := "prepare"
+	slog.Info("migration.cleanup_start", "retry", retry)
+	defer func() {
+		if failure != nil {
+			slog.Error("migration.cleanup_failed", "phase", phase, "reasonCode", migrationFailureReason(failure), "durationMs", time.Since(started).Milliseconds())
+		} else {
+			status := "unknown"
+			if result != nil && result.LegacyCleanup != nil {
+				switch result.LegacyCleanup.Status {
+				case "kept", "deleted", "failed", "pending":
+					status = result.LegacyCleanup.Status
+				}
+			}
+			slog.Info("migration.cleanup_finish", "status", status, "durationMs", time.Since(started).Milliseconds())
+		}
+	}()
 	target, err := realDirectory(target)
 	if err != nil {
 		return nil, err
@@ -863,7 +935,7 @@ func CleanupReaderData(source, target, choice string) (*ReaderMigration, error) 
 		return nil, err
 	}
 	if !ok {
-		return nil, fmt.Errorf("另一个 NeoRead 正在处理迁移记录")
+		return nil, migrationErrorf("migration_busy", "另一个 NeoRead 正在处理迁移记录")
 	}
 	defer lock.Unlock()
 	file, state, err := readMigration(target)
@@ -873,11 +945,17 @@ func CleanupReaderData(source, target, choice string) (*ReaderMigration, error) 
 	if state == nil || state.Status != "completed" || state.LegacyCleanup == nil {
 		return nil, fmt.Errorf("迁移尚未完成，不能清理旧数据")
 	}
-	if state.LegacyCleanup.Status != "pending" {
-		return state, nil
-	}
 	if err = validateMigrationState(source, target, state); err != nil {
 		return nil, err
+	}
+	if retry && state.LegacyCleanup.Status == "pending" {
+		return nil, migrationErrorf("cleanup_not_failed", "清理尚未失败，请使用普通清理操作")
+	}
+	if retry && state.LegacyCleanup.Status == "kept" {
+		return nil, migrationErrorf("cleanup_kept", "旧数据已选择保留，未执行重试")
+	}
+	if state.LegacyCleanup.Status != "pending" && !(retry && state.LegacyCleanup.Status == "failed") {
+		return state, nil
 	}
 	if choice == "keep" {
 		state.LegacyCleanup.Status = "kept"
@@ -891,6 +969,10 @@ func CleanupReaderData(source, target, choice string) (*ReaderMigration, error) 
 	state.LegacyCleanup.Status = "failed"
 	if err = saveMigration(target, file, state); err != nil {
 		return nil, err
+	}
+	quarantine := filepath.Join(filepath.Dir(source), ".reader-cleanup-"+state.ID)
+	if pathExists(quarantine) {
+		return nil, migrationErrorf("cleanup_interrupted", "清理临时目录已存在，旧数据保留在 %s，请检查后手动处理", quarantine)
 	}
 	if !pathExists(source) {
 		state.LegacyCleanup.Status = "deleted"
@@ -911,26 +993,31 @@ func CleanupReaderData(source, target, choice string) (*ReaderMigration, error) 
 		return nil, err
 	}
 	defer unlock()
-	hash, _, err := state.treeDigest(source)
+	phase = "verify_source"
+	if err = state.checkDataPaths(); err != nil {
+		return nil, err
+	}
+	dataHash, _, err := state.businessDigest(source)
 	if err != nil {
 		return nil, err
 	}
-	if hash != state.SourceHash {
-		return nil, fmt.Errorf("旧 Reader 数据在迁移后发生变化，请检查后手动删除")
+	if state.DataOnly {
+		hash := dataHash
+		if hash != state.SourceHash {
+			return nil, migrationErrorf("source_changed", "旧阅读数据在迁移后发生变化，请检查后手动清理")
+		}
+	} else {
+		runtimeFiles, err := readerCitationFiles(source)
+		if err != nil {
+			return nil, err
+		}
+		if err = checkReaderCleanupDigest(source, target, state, runtimeFiles); err != nil {
+			return nil, err
+		}
 	}
-	// Detach the exact old directory under its held library lock. A Reader
-	// launched afterwards may recreate the old path; that new directory is never
-	// deleted. If Windows refuses the rename while locked, fail safely.
-	tombstone := filepath.Join(filepath.Dir(source), ".reader-cleanup-"+state.ID)
-	if pathExists(tombstone) {
-		return nil, fmt.Errorf("旧数据清理目录已存在，未覆盖：%s", tombstone)
-	}
-	if err = os.Rename(source, tombstone); err != nil {
-		return nil, fmt.Errorf("无法移除旧数据目录，请退出 Reader 后手动删除：%w", err)
-	}
-	unlock()
-	if err = os.RemoveAll(tombstone); err != nil {
-		return nil, fmt.Errorf("部分旧数据仍在 %s，请手动删除：%w", tombstone, err)
+	phase = "delete_data"
+	if err = removeReaderBusinessData(source, state, dataHash); err != nil {
+		return nil, err
 	}
 	state.LegacyCleanup.Status = "deleted"
 	return state, saveMigration(target, file, state)

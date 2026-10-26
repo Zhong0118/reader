@@ -64,6 +64,13 @@ export function paperAttachmentSource(
 export function publicationURL(documentId: string, resource: string) {
   return `/pub/${encodeURIComponent(sessionToken)}/${encodeURIComponent(documentId)}/${resource}`;
 }
+/** The book's own cover, or the stored first page of a PDF. */
+export function coverURL(documentId: string, revision?: number) {
+  return publicationURL(
+    documentId,
+    `neoread-cover${revision ? `?v=${revision}` : ""}`,
+  );
+}
 export function blockImageURL(
   documentId: string,
   blockId: string,
@@ -571,6 +578,12 @@ export const api = {
     request<Document>(`/api/documents/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
+    }),
+  saveCover: (id: string, image: Blob) =>
+    request<void>(`/api/documents/${encodeURIComponent(id)}/cover`, {
+      method: "PUT",
+      headers: { "Content-Type": "image/jpeg" },
+      body: image,
     }),
   recoverAnnotations: (id: string, force = false) =>
     request<{ checked: boolean }>(`/api/documents/${id}/annotations/recover`, {

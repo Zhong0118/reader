@@ -39,7 +39,9 @@ type PaperMetadata struct {
 	Abstract        string    `json:"abstract,omitempty"`
 	Language        string    `json:"language,omitempty"`
 	// Remark is the reader's own note on the item, never looked up.
-	Remark  string            `json:"remark,omitempty"`
+	Remark string `json:"remark,omitempty"`
+	// Rating is the reader's own 1–5 star score; 0 means unrated.
+	Rating  int               `json:"rating,omitempty"`
 	Sources map[string]string `json:"sources,omitempty"`
 	// Lookup is "pending" until the automatic lookup ran, then "done",
 	// "notFound" or "failed".
@@ -113,6 +115,13 @@ var metadataLabels = map[string]string{
 
 // normalizeMetadataField validates one field and returns its canonical value.
 func normalizeMetadataField(key string, raw json.RawMessage) (any, error) {
+	if key == "rating" {
+		var rating int
+		if json.Unmarshal(raw, &rating) != nil || rating < 0 || rating > 5 {
+			return nil, errors.New("评分须为 0–5 的整数")
+		}
+		return rating, nil
+	}
 	label := metadataLabels[key]
 	if label == "" {
 		return nil, fmt.Errorf("未知论文字段：%s", key)
@@ -194,9 +203,12 @@ func (m *PaperMetadata) textField(key string) *string {
 
 // set stores a validated value and records its source.
 func (m *PaperMetadata) set(key string, value any, source string) {
-	if key == "creators" {
+	switch key {
+	case "creators":
 		m.Creators = value.([]Creator)
-	} else {
+	case "rating":
+		m.Rating = value.(int)
+	default:
 		*m.textField(key) = value.(string)
 	}
 	if m.Sources == nil {

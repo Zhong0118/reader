@@ -27,6 +27,10 @@ func (m *PaperMetadata) FillFrom(other PaperMetadata) []string {
 		}
 		filled = append(filled, key)
 	}
+	if m.Rating == 0 && other.Rating > 0 {
+		m.set("rating", other.Rating, "manual")
+		filled = append(filled, "rating")
+	}
 	return filled
 }
 

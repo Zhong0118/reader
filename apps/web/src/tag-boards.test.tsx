@@ -54,6 +54,8 @@ async function render() {
         favorite={() => {}}
         onEdit={() => {}}
         onSettings={() => {}}
+        onOverview={() => {}}
+        onUsage={() => {}}
       />,
     ),
   );

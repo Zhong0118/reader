@@ -52,6 +52,10 @@ export function TagBoards({
   favorite,
   onEdit,
   onSettings,
+  onOverview,
+  onUsage,
+  detailId,
+  onDetail,
 }: {
   documents: Document[];
   query: string;
@@ -61,6 +65,10 @@ export function TagBoards({
   favorite: (doc: Document) => void;
   onEdit: (id: string) => void;
   onSettings: () => void;
+  onOverview: (doc: Document) => void;
+  onUsage: (doc: Document) => void;
+  detailId?: string | null;
+  onDetail?: (id: string | null) => void;
 }) {
   const [boards, setBoards] = useState<TagBoard[]>([]);
   const [loading, setLoading] = useState(true);
@@ -453,6 +461,10 @@ export function TagBoards({
             favorite={favorite}
             onEdit={onEdit}
             onSettings={onSettings}
+            onOverview={onOverview}
+            onUsage={onUsage}
+            activeId={detailId}
+            onActivate={onDetail}
           />
         ) : (
           <p className="py-12 text-center text-sm text-muted-foreground">

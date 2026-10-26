@@ -1084,6 +1084,49 @@
                 },
             },
         },
+      "/api/documents/{id}/cover":
+        {
+          "put":
+            {
+              "summary": "Store the renderer's first-page image as a PDF's cover",
+              "description": "EPUB covers come from the book. The cover is read from /pub/{capability}/{id}/neoread-cover.",
+              "parameters":
+                [
+                  {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": { "type": "string" },
+                  },
+                ],
+              "requestBody":
+                {
+                  "required": true,
+                  "content":
+                    {
+                      "image/jpeg":
+                        {
+                          "schema":
+                            {
+                              "type": "string",
+                              "format": "binary",
+                              "maxLength": 2097152,
+                            },
+                        },
+                    },
+                },
+              "responses":
+                {
+                  "204": { "description": "Cover saved" },
+                  "400":
+                    {
+                      "description": "Not a PDF, or not a JPEG within 2000×3000",
+                    },
+                  "404": { "description": "Document not found" },
+                  "413": { "description": "Image larger than 2 MiB" },
+                },
+            },
+        },
       "/api/documents/{id}/snapshot":
         {
           "get":
@@ -1677,6 +1720,13 @@
                                             {
                                               "type": "string",
                                               "maxLength": 20000,
+                                            },
+                                          "rating":
+                                            {
+                                              "type": "integer",
+                                              "minimum": 0,
+                                              "maximum": 5,
+                                              "description": "0 clears the rating",
                                             },
                                         },
                                       "additionalProperties": false,
@@ -6992,6 +7042,13 @@
                     {
                       "type": "string",
                       "description": "The reader's own note on the item; never looked up",
+                    },
+                  "rating":
+                    {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 5,
+                      "description": "The reader's own star rating; absent when unrated",
                     },
                   "sources":
                     {

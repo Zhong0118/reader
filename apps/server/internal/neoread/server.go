@@ -163,6 +163,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/documents/{id}/translations/stream", s.streamTranslations)
 	mux.HandleFunc("POST /api/documents/{id}/translations", s.requestTranslation)
 	mux.HandleFunc("PATCH /api/documents/{id}", s.updateDocument)
+	mux.HandleFunc("PUT /api/documents/{id}/cover", s.saveDocumentCover)
 	mux.HandleFunc("DELETE /api/documents/{id}", s.deleteDocument)
 	mux.HandleFunc("POST /api/documents/{id}/trash", s.trashDocument)
 	mux.HandleFunc("POST /api/documents/{id}/merge", s.mergeDocuments)
@@ -474,6 +475,11 @@ func (s *Server) importFileToCategory(ctx context.Context, temp, filename, libra
 		}
 	}
 	var texts map[string]string
+	metadata := "{}"
+	if library == "papers" {
+		// Papers imported from files look up their metadata once parsed.
+		metadata = `{"lookup":"pending"}`
+	}
 	cache := filepath.Join(s.Store.Root, "cache", docID)
 	success := false
 	defer func() {
@@ -487,6 +493,13 @@ func (s *Server) importFileToCategory(ctx context.Context, temp, filename, libra
 			return failure(400, "EPUB 无法导入："+e.Error())
 		}
 		texts = t
+		book := PaperMetadata{}
+		book.Merge(epubBookMetadata(m), "file")
+		if library == "papers" {
+			book.Lookup = "pending"
+		}
+		b, _ := json.Marshal(book)
+		metadata = string(b)
 		if metadata, ok := m["metadata"].(map[string]any); ok {
 			if title, ok := metadata["title"].(string); ok && title != "" {
 				d.Title = title
@@ -514,11 +527,6 @@ func (s *Server) importFileToCategory(ctx context.Context, temp, filename, libra
 		return failure(500, "无法写入书库")
 	}
 	defer tx.Rollback()
-	metadata := "{}"
-	if library == "papers" {
-		// Papers imported from files look up their metadata once parsed.
-		metadata = `{"lookup":"pending"}`
-	}
 	folders, _ := json.Marshal(d.Folders)
 	tagJSON, _ := json.Marshal(d.Tags)
 	_, err = tx.Exec("INSERT INTO documents(id,type,title,author,size,created_at,last_opened_at,category,category_source,classification_status,library,metadata,folders,tags) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", d.ID, d.Type, d.Title, d.Author, d.Size, d.CreatedAt, d.LastOpenedAt, d.Category, d.CategorySource, d.ClassificationStatus, d.Library, metadata, string(folders), string(tagJSON))
@@ -784,6 +792,10 @@ func (s *Server) resource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("resource")
+	if name == coverResource {
+		s.documentCover(w, r, d)
+		return
+	}
 	if d.Type == "pdf" {
 		if name == "snapshot.html" {
 			s.connectorSnapshot(w, r, d.ID)

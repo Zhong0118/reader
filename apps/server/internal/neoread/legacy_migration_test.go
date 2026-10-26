@@ -252,7 +252,7 @@ func TestReaderCleanupKeepAndChangedSourceAreNeverRetried(t *testing.T) {
 			t.Fatal(err)
 		}
 		if choice == "delete" {
-			os.WriteFile(filepath.Join(old, "new-note"), []byte("do not delete"), 0600)
+			os.WriteFile(filepath.Join(old, "library", "new-note"), []byte("do not delete"), 0600)
 		}
 		_, err = CleanupReaderData(old, current, choice)
 		if choice == "delete" && err == nil {
@@ -352,7 +352,7 @@ func TestReaderMigrationRefusesMissingOriginalFile(t *testing.T) {
 }
 func TestReaderMigrationRejectsSymlinks(t *testing.T) {
 	old, current, _ := legacyFixture(t, false)
-	if err := os.Symlink(t.TempDir(), filepath.Join(old, "linked-data")); err != nil {
+	if err := os.Symlink(t.TempDir(), filepath.Join(old, "library", "linked-data")); err != nil {
 		t.Skip(err)
 	}
 	if _, err := MigrateReaderData(old, current); err == nil {
@@ -583,6 +583,7 @@ func TestReaderMigrationResumesVerifiedWithLegacyCaches(t *testing.T) {
 				var fields map[string]json.RawMessage
 				json.Unmarshal(encoded, &fields)
 				delete(fields, "digestVersion")
+				delete(fields, "dataOnly")
 				encoded, _ = json.Marshal(fields)
 				state = new(ReaderMigration)
 				if err := json.Unmarshal(encoded, state); err != nil {
@@ -664,8 +665,21 @@ func TestReaderMigrationDiagnosticReasons(t *testing.T) {
 					t.Fatal(err)
 				}
 			case "target_conflict":
-				writeMigrationCache(t, old, "PRIVATE_ENTRY_SENTINEL", "private contents")
-				writeMigrationCache(t, current, "PRIVATE_ENTRY_SENTINEL", "existing data")
+				state, err := MigrateReaderData(old, current)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err = os.Rename(filepath.Join(current, "proxy-settings.json"), filepath.Join(current, migrationStage, "app", "proxy-settings.json")); err != nil {
+					t.Fatal(err)
+				}
+				if err = os.WriteFile(filepath.Join(current, "proxy-settings.json"), []byte("PRIVATE_NEW_SETTINGS"), 0600); err != nil {
+					t.Fatal(err)
+				}
+				file, _, _ := readMigration(current)
+				state.Status = "verified"
+				if err = saveMigration(current, file, state); err != nil {
+					t.Fatal(err)
+				}
 			case "entry_hash_mismatch", "stage_owner_mismatch":
 				state, err := MigrateReaderData(old, current)
 				if err != nil {

@@ -8,10 +8,7 @@ import {
   Trash2,
   Check,
   ChartColumn,
-  ArrowRightLeft,
-  FileDown,
 } from "lucide-react";
-import { exportAnnotatedPDFWithToast } from "./annotated-pdf-export";
 import type { Document, LibraryMode, Processing } from "@neoread/core";
 import { api } from "@neoread/api";
 import { toast } from "sonner";
@@ -22,17 +19,13 @@ import {
   ContextMenuTrigger,
   ContextMenuContent,
   ContextMenuItem,
-  ContextMenuSeparator,
 } from "@neoread/ui/components/context-menu";
 import { DocumentBadges } from "./DocumentManagement";
-import { ProcessingUsageDialog } from "./ProcessingUsage";
-import {
-  CoverOverview,
-  DocumentOverviewDialog,
-  useOverviewJobs,
-} from "./DocumentOverview";
+import { CoverOverview, useOverviewJobs } from "./DocumentOverview";
 import { CoverProcessing } from "./ProcessingStatus";
 import { toggleDocumentSelection, trashWithUndo } from "./library-actions";
+import { BookCoverImage } from "./book-cover";
+import { BookMenuItems } from "./BookMenu";
 
 export function LibraryDocuments({
   documents,
@@ -44,8 +37,12 @@ export function LibraryDocuments({
   onEdit,
   onMove,
   onSettings,
+  onOverview,
+  onUsage,
   editing,
   onEditingChange,
+  activeId,
+  onActivate,
 }: {
   documents: Document[];
   libraryView: "grid" | "list";
@@ -56,14 +53,16 @@ export function LibraryDocuments({
   onEdit: (id: string) => void;
   onMove?: (doc: Document, library: LibraryMode) => void;
   onSettings: () => void;
+  onOverview: (doc: Document) => void;
+  onUsage: (doc: Document) => void;
   editing?: boolean;
   onEditingChange?: (editing: boolean) => void;
+  /** The document shown in the detail panel. */
+  activeId?: string | null;
+  /** Single click shows details and double click opens; without it, click opens. */
+  onActivate?: (id: string | null) => void;
 }) {
-  const [overviewDocument, setOverviewDocument] = useState<Document | null>(
-    null,
-  );
   const overviewJobs = useOverviewJobs();
-  const [usageDocument, setUsageDocument] = useState<Document | null>(null);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState(false);
   const pending = useRef(false);
@@ -130,6 +129,7 @@ export function LibraryDocuments({
         if (e.key === "Escape") {
           changeEditing(false);
           setSelection(new Set());
+          onActivate?.(null);
         }
       }}
     >
@@ -184,6 +184,7 @@ export function LibraryDocuments({
               render={<article />}
               className="book-card"
               data-selected={selecting && selected.has(doc.id)}
+              data-active={!selecting && activeId === doc.id}
               tabIndex={0}
               aria-label={doc.title}
               onKeyDown={(e) => {
@@ -193,8 +194,29 @@ export function LibraryDocuments({
                 ) {
                   e.preventDefault();
                   if (selecting) toggle(doc.id, e.shiftKey);
+                  else if (e.key === " " && onActivate)
+                    onActivate(activeId === doc.id ? null : doc.id);
                   else openDocument(doc);
                 }
+              }}
+              onClick={(e) => {
+                if (
+                  selecting ||
+                  !onActivate ||
+                  // The second click of a double click opens instead.
+                  e.detail > 1 ||
+                  (e.target as Element).closest("[data-document-action]")
+                )
+                  return;
+                onActivate(activeId === doc.id ? null : doc.id);
+              }}
+              onDoubleClick={(e) => {
+                if (
+                  !selecting &&
+                  onActivate &&
+                  !(e.target as Element).closest("[data-document-action]")
+                )
+                  openDocument(doc);
               }}
               onClickCapture={(e) => {
                 if (
@@ -222,10 +244,15 @@ export function LibraryDocuments({
                 <Button
                   variant="ghost"
                   title={doc.title}
-                  aria-label={`打开 ${doc.title}`}
+                  aria-label={
+                    onActivate
+                      ? `查看 ${doc.title} 的详情`
+                      : `打开 ${doc.title}`
+                  }
                   className={`book-cover cover-${i % 4}`}
-                  onClick={() => openDocument(doc)}
+                  onClick={onActivate ? undefined : () => openDocument(doc)}
                 >
+                  <BookCoverImage doc={doc} />
                   <div className="cover-top">
                     <span>{doc.type.toUpperCase()}</span>
                     {doc.type === "epub" ? (
@@ -266,7 +293,7 @@ export function LibraryDocuments({
                 ) ? (
                   <CoverOverview
                     job={overviewJobs.find((o) => o.documentId === doc.id)!}
-                    onOpen={() => setOverviewDocument(doc)}
+                    onOpen={() => onOverview(doc)}
                   />
                 ) : (
                   doc.type === "pdf" &&
@@ -298,7 +325,7 @@ export function LibraryDocuments({
                   title={doc.title}
                   className="book-title"
                   variant="ghost"
-                  onClick={() => openDocument(doc)}
+                  onClick={onActivate ? undefined : () => openDocument(doc)}
                 >
                   <span>{doc.title}</span>
                 </Button>
@@ -324,7 +351,7 @@ export function LibraryDocuments({
                   aria-label={`查看 ${doc.title} 的用量统计`}
                   title="用量统计"
                   data-document-action
-                  onClick={() => setUsageDocument(doc)}
+                  onClick={() => onUsage(doc)}
                 >
                   <ChartColumn />
                 </Button>
@@ -360,44 +387,17 @@ export function LibraryDocuments({
               </p>
             </ContextMenuTrigger>
             <ContextMenuContent>
-              <ContextMenuItem onClick={() => setOverviewDocument(doc)}>
-                <BookOpen />
-                文档概要
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => setUsageDocument(doc)}>
-                <ChartColumn />
-                用量统计
-              </ContextMenuItem>
-              <ContextMenuItem onClick={() => onEdit(doc.id)}>
-                <Pencil />
-                编辑文档信息
-              </ContextMenuItem>
-              {doc.type === "pdf" && (
-                <ContextMenuItem
-                  onClick={() => void exportAnnotatedPDFWithToast(doc)}
-                >
-                  <FileDown />
-                  导出带批注的 PDF
-                </ContextMenuItem>
-              )}
-              {onMove && (doc.type === "pdf" || doc.library === "papers") && (
-                <ContextMenuItem
-                  onClick={() =>
-                    onMove(doc, doc.library === "papers" ? "books" : "papers")
-                  }
-                >
-                  <ArrowRightLeft />
-                  {doc.library === "papers" ? "移到图书库" : "移到论文库"}
-                </ContextMenuItem>
-              )}
-              <ContextMenuSeparator />
-              <ContextMenuItem
-                variant="destructive"
-                onClick={() => void trash([doc.id])}
-              >
-                <Trash2 />
-                移到回收站
-              </ContextMenuItem>
+              <BookMenuItems
+                kind="context"
+                doc={doc}
+                actions={{
+                  overview: onOverview,
+                  usage: onUsage,
+                  edit: (d) => onEdit(d.id),
+                  move: onMove,
+                  trash: (d) => void trash([d.id]),
+                }}
+              />
               {selecting && selected.has(doc.id) && selected.size > 1 && (
                 <ContextMenuItem variant="destructive" onClick={removeSelected}>
                   <Trash2 />
@@ -408,16 +408,6 @@ export function LibraryDocuments({
           </ContextMenu>
         ))}
       </div>
-      <DocumentOverviewDialog
-        key={overviewDocument?.id}
-        document={overviewDocument}
-        onClose={() => setOverviewDocument(null)}
-      />
-      <ProcessingUsageDialog
-        document={usageDocument}
-        job={jobs.find((job) => job.documentId === usageDocument?.id)}
-        onClose={() => setUsageDocument(null)}
-      />
     </section>
   );
 }

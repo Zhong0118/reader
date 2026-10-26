@@ -73,6 +73,7 @@ try {
     [
       "--port",
       "0",
+      "--connector=false",
       "--data",
       join(temporary, "library"),
       "--web",

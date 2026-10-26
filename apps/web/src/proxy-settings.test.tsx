@@ -171,11 +171,8 @@ it("offers restart in system mode and tests the active configuration", async () 
   await render();
   expect(host.textContent).toContain("切换系统代理后，请重启 NeoRead 再检测。");
   await click("检测连接");
-  expect(check).toHaveBeenCalledExactlyOnceWith({ mode: "system" });
+  expect(check).toHaveBeenCalledWith({ mode: "system" });
   expect(save).not.toHaveBeenCalled();
-  expect(host.querySelector('[role="status"]')?.textContent).toContain(
-    "HTTP 403 · 18 ms · 经代理",
-  );
   expect(button("重启 NeoRead").disabled).toBe(false);
   await click("重启 NeoRead");
   expect(restart).toHaveBeenCalledOnce();

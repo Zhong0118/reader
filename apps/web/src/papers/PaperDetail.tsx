@@ -110,14 +110,18 @@ function saveField(doc: Document, key: PaperMetadataField, value: unknown) {
 }
 
 /** A text field that saves on blur or Enter and restores on Escape. */
-function Field({
+export function Field({
   doc,
   name,
   multiline = false,
+  label = fieldLabels[name],
+  placeholder = placeholders[name],
 }: {
   doc: Document;
   name: PaperMetadataField;
   multiline?: boolean;
+  label?: string;
+  placeholder?: string;
 }) {
   const value = String(doc.metadata[name] ?? "");
   const commit = (next: string) => {
@@ -127,8 +131,8 @@ function Field({
     // Remount when the saved value changes so the field shows it.
     key: `${doc.id}:${value}`,
     defaultValue: value,
-    "aria-label": fieldLabels[name],
-    placeholder: placeholders[name] || "—",
+    "aria-label": label,
+    placeholder: placeholder || "—",
     className: "paper-field-input",
     onBlur: (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) =>
       commit(e.currentTarget.value),

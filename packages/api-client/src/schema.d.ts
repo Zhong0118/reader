@@ -1054,6 +1054,70 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/documents/{id}/cover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Store the renderer's first-page image as a PDF's cover
+         * @description EPUB covers come from the book. The cover is read from /pub/{capability}/{id}/neoread-cover.
+         */
+        put: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "image/jpeg": string;
+                };
+            };
+            responses: {
+                /** @description Cover saved */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Not a PDF, or not a JPEG within 2000×3000 */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Document not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Image larger than 2 MiB */
+                413: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{id}/snapshot": {
         parameters: {
             query?: never;
@@ -1540,6 +1604,8 @@ export interface paths {
                             abstract?: string;
                             language?: string;
                             remark?: string;
+                            /** @description 0 clears the rating */
+                            rating?: number;
                         };
                         /** @enum {unknown} */
                         readingStatus?: "unread" | "reading" | "done";
@@ -5257,6 +5323,8 @@ export interface components {
             language?: string;
             /** @description The reader's own note on the item; never looked up */
             remark?: string;
+            /** @description The reader's own star rating; absent when unrated */
+            rating?: number;
             /** @description Origin per field; lookups never replace manual values */
             sources?: {
                 [key: string]: "file" | "lookup" | "manual";

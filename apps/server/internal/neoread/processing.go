@@ -343,6 +343,9 @@ func (s *Server) StartProcessing(parent context.Context) func() {
 		log.Printf("cannot prepare EPUB processing: %v", err)
 		return cancel
 	}
+	if err := s.fillEPUBBookMetadata(); err != nil {
+		log.Printf("cannot read EPUB book details: %v", err)
+	}
 	var workers sync.WaitGroup
 	if _, e := s.Store.DB.Exec("UPDATE document_overview_jobs SET status='queued' WHERE status='running'"); e != nil {
 		log.Printf("cannot recover document overviews: %v", e)

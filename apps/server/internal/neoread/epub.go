@@ -158,10 +158,45 @@ func prepareEPUB(ctx context.Context, filename, cache string) (map[string]any, m
 	return m, texts, err
 }
 
+// XHTML self-closing elements must be closed before HTML parsing. Otherwise an
+// empty script consumes the book, or an empty index anchor wraps later prose.
+// Tokenization leaves apparent tags inside scripts and comments untouched.
+func expandEPUBSelfClosingElements(data []byte) []byte {
+	var out bytes.Buffer
+	tokenizer := html.NewTokenizer(bytes.NewReader(data))
+	for {
+		kind := tokenizer.Next()
+		if kind == html.ErrorToken {
+			out.Write(tokenizer.Raw())
+			return out.Bytes()
+		}
+		raw := append([]byte(nil), tokenizer.Raw()...)
+		if kind == html.SelfClosingTagToken {
+			name, _ := tokenizer.TagName()
+			if !epubVoidElement(string(name)) {
+				tokenizer.NextIsNotRawText()
+				out.Write(raw[:len(raw)-2])
+				out.WriteByte('>')
+				out.WriteString("</" + string(name) + ">")
+				continue
+			}
+		}
+		out.Write(raw)
+	}
+}
+
+func epubVoidElement(tag string) bool {
+	switch tag {
+	case "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr":
+		return true
+	}
+	return false
+}
+
 // Book content is untrusted. Preserve typography but remove active HTML before
 // Readium creates its same-origin iframe and injects its own navigation code.
 func sanitizeContent(data []byte) ([]byte, string, error) {
-	doc, err := html.Parse(bytes.NewReader(data))
+	doc, err := html.Parse(bytes.NewReader(expandEPUBSelfClosingElements(data)))
 	if err != nil {
 		return nil, "", err
 	}
@@ -257,7 +292,8 @@ func writeXML(out *bytes.Buffer, n *html.Node) {
 				out.WriteString(` xmlns="http://www.w3.org/1998/Math/MathML"`)
 			}
 		}
-		if n.FirstChild == nil {
+		// Chapters are parsed again as HTML; <a/> would reopen an empty anchor.
+		if n.FirstChild == nil && epubVoidElement(n.Data) {
 			out.WriteString("/>")
 			return
 		}

@@ -40,9 +40,14 @@ func main() {
 	legacySource := flag.String("migrate-reader-data", "", "migrate Reader application data once and exit")
 	legacyCleanup := flag.String("cleanup-reader-data", "", "keep or delete the migrated Reader application data")
 	legacyDirectory := flag.String("reader-data", "", "legacy application data directory for cleanup")
+	retryLegacyCleanup := flag.Bool("retry-reader-cleanup", false, "explicitly retry a failed Reader data cleanup")
 	shutdownOnStdin := flag.Bool("shutdown-on-stdin", false, "shut down when the desktop closes stdin")
 	checkLibrary := flag.Bool("check-library", false, "validate an existing library and exit")
 	flag.Parse()
+	if *retryLegacyCleanup && (*legacyCleanup != "delete" || *legacySource != "") {
+		fmt.Fprintln(os.Stderr, "--retry-reader-cleanup requires --cleanup-reader-data delete")
+		os.Exit(2)
+	}
 	if *checkLibrary {
 		if err := neoread.ValidateLibrary(*data); err != nil {
 			log.Fatal(err)
@@ -59,6 +64,8 @@ func main() {
 		var err error
 		if *legacySource != "" {
 			state, err = neoread.MigrateReaderData(*legacySource, *data)
+		} else if *retryLegacyCleanup {
+			state, err = neoread.RetryReaderCleanup(*legacyDirectory, *data)
 		} else {
 			state, err = neoread.CleanupReaderData(*legacyDirectory, *data, *legacyCleanup)
 		}

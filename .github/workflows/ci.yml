@@ -93,3 +93,6 @@ jobs:
       - name: Test Windows attachment cleanup and byte-range serving
         working-directory: apps/server
         run: go test ./internal/neoread -run '^TestPaperAttachment(Download|FileRanges|CountUses)' -count=1
+      - name: Test Windows Reader migration and cleanup
+        working-directory: apps/server
+        run: go test ./internal/neoread -run '^TestReader(Migration|Cleanup)' -count=1

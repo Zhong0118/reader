@@ -66,10 +66,20 @@ import { useResolvedTheme } from "./appearance";
 import { DocumentEditor, LibraryFilterBar } from "./DocumentManagement";
 import { TagBoards } from "./TagBoards";
 import { LibraryDocuments } from "./LibraryDocuments";
+import { ResizableBookDetail } from "./BookDetail";
+import type { BookMenuActions } from "./BookMenu";
+import { DocumentOverviewDialog } from "./DocumentOverview";
+import { ProcessingUsageDialog } from "./ProcessingUsage";
+import { trashWithUndo } from "./library-actions";
 import { filterDocuments, initialFilters } from "./library";
 import { GuideHost } from "./guide/GuideHost";
 const currentMode = () =>
   libraryMode(useReaderStore.getState().libraryPreferences);
+/** Whether a press landed on library space rather than a book or control. */
+const onEmptyLibrary = (target: EventTarget) =>
+  !(target as Element).closest(
+    '.book-card, .book-detail, button, a, input, textarea, select, label, [role="button"], [role="separator"], [role="menu"], [role="dialog"]',
+  );
 export function App() {
   const {
     documents: allDocuments,
@@ -99,6 +109,12 @@ export function App() {
   const [libraryView, setLibraryView] = useState<"grid" | "list">("grid");
   const [editingLibrary, setEditingLibrary] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [detailId, setDetailId] = useState<string | null>(null);
+  const pressedEmpty = useRef(false);
+  const [overviewDocument, setOverviewDocument] = useState<Document | null>(
+    null,
+  );
+  const [usageDocument, setUsageDocument] = useState<Document | null>(null);
   const [query, setQuery] = useState("");
   const [commandQuery, setCommandQuery] = useState("");
   const [busy, setBusy] = useState(false);
@@ -416,6 +432,18 @@ export function App() {
       toast.error((e as Error).message);
     }
   };
+  // A book that left the library (trash, move) cannot stay in the panel.
+  const detail =
+    filter === "trash" || editingLibrary
+      ? undefined
+      : documents.find((d) => d.id === detailId);
+  const bookActions: BookMenuActions = {
+    overview: setOverviewDocument,
+    usage: setUsageDocument,
+    edit: (doc) => setEditingId(doc.id),
+    move: (doc, library) => void moveDocument(doc, library),
+    trash: (doc) => void trashWithUndo([doc.id]),
+  };
   return (
     <TooltipProvider>
       <div
@@ -595,7 +623,25 @@ export function App() {
                 onToggleNav={() => setNav(!nav)}
               />
             ) : (
-              <main className="library-main">
+              <main
+                className="library-main book-library"
+                onPointerDown={(e) => {
+                  pressedEmpty.current =
+                    e.button === 0 && onEmptyLibrary(e.target);
+                }}
+                onClick={(e) => {
+                  // Clicking empty library space closes the detail panel. It
+                  // waits for the click so a field being edited saves on blur
+                  // first, and ignores drags that began inside the panel.
+                  if (
+                    detailId &&
+                    pressedEmpty.current &&
+                    onEmptyLibrary(e.target)
+                  )
+                    setDetailId(null);
+                  pressedEmpty.current = false;
+                }}
+              >
                 <header className="library-topbar">
                   <div className="flex items-center gap-3">
                     <Button
@@ -641,120 +687,141 @@ export function App() {
                     </Button>
                   )}
                 </header>
-                <div className="library-content">
-                  {filter === "favorites" && (
-                    <div className="library-controls">
-                      <div className="search-field">
-                        <Search className="size-4" />
-                        <Input
-                          aria-label="搜索书库"
-                          placeholder="搜索标题、作者、标签…"
-                          value={query}
-                          onChange={(e) => setQuery(e.target.value)}
+                <div className="book-library-body">
+                  <div className="book-list-pane">
+                    <div className="library-content">
+                      {filter === "favorites" && (
+                        <div className="library-controls">
+                          <div className="search-field">
+                            <Search className="size-4" />
+                            <Input
+                              aria-label="搜索书库"
+                              placeholder="搜索标题、作者、标签…"
+                              value={query}
+                              onChange={(e) => setQuery(e.target.value)}
+                            />
+                          </div>
+                        </div>
+                      )}
+                      {filter !== "tags" && filter !== "trash" && (
+                        <LibraryFilterBar
+                          documents={documents}
+                          filters={filters}
+                          onChange={setFilters}
+                          view={libraryView}
+                          onViewChange={setLibraryView}
+                          count={filtered.length}
                         />
-                      </div>
-                    </div>
-                  )}
-                  {filter !== "tags" && filter !== "trash" && (
-                    <LibraryFilterBar
-                      documents={documents}
-                      filters={filters}
-                      onChange={setFilters}
-                      view={libraryView}
-                      onViewChange={setLibraryView}
-                      count={filtered.length}
-                    />
-                  )}
-                  {processingError && (
-                    <p className="processing-warning" role="status">
-                      解析进度暂时不可用：{processingError}
-                    </p>
-                  )}
-                  {error ? (
-                    <div className="empty-state">
-                      <h2>暂时无法连接本地书库</h2>
-                      <p>{error}</p>
-                      <Button
-                        variant="outline"
-                        onClick={() => location.reload()}
-                      >
-                        重新连接
-                      </Button>
-                    </div>
-                  ) : loading ? (
-                    <div className="empty-state">
-                      <Loader2 className="animate-spin text-muted-foreground" />
-                      <p>正在打开本地书库</p>
-                    </div>
-                  ) : filter === "trash" ? (
-                    <TrashView documents={trash} />
-                  ) : filter === "tags" ? (
-                    <TagBoards
-                      documents={documents}
-                      query={query}
-                      jobs={jobs}
-                      processingError={processingError}
-                      openDocument={openDocument}
-                      favorite={favorite}
-                      onEdit={setEditingId}
-                      onSettings={() => setSettings(true)}
-                    />
-                  ) : filtered.length ? (
-                    <LibraryDocuments
-                      key={JSON.stringify([filter, query, filters])}
-                      documents={filtered}
-                      libraryView={libraryView}
-                      editing={editingLibrary}
-                      onEditingChange={setEditingLibrary}
-                      jobs={jobs}
-                      processingError={processingError}
-                      openDocument={openDocument}
-                      favorite={favorite}
-                      onEdit={setEditingId}
-                      onMove={moveDocument}
-                      onSettings={() => setSettings(true)}
-                    />
-                  ) : (
-                    <div className="empty-state">
-                      <div className="empty-books">
-                        <span>
-                          <FileText />
-                        </span>
-                        <span>
-                          <BookOpen />
-                        </span>
-                      </div>
-                      <h2>
-                        {documents.length
-                          ? "没有符合筛选条件的文档"
-                          : filter === "favorites"
-                            ? "暂无收藏"
-                            : papers
-                              ? "暂无论文"
-                              : "暂无文档"}
-                      </h2>
-                      {!!documents.length && (
-                        <Button
-                          variant="outline"
-                          onClick={() => {
-                            setFilters(initialFilters);
-                            setQuery("");
-                            setFilter("all");
-                          }}
-                        >
-                          显示全部文档
-                        </Button>
                       )}
-                      {!documents.length && !papers && (
-                        <Button
-                          variant="link"
-                          onClick={() => void sample()}
-                          disabled={busy}
-                        >
-                          先体验示例文档 <ArrowUpRight className="size-3" />
-                        </Button>
+                      {processingError && (
+                        <p className="processing-warning" role="status">
+                          解析进度暂时不可用：{processingError}
+                        </p>
+                      )}
+                      {error ? (
+                        <div className="empty-state">
+                          <h2>暂时无法连接本地书库</h2>
+                          <p>{error}</p>
+                          <Button
+                            variant="outline"
+                            onClick={() => location.reload()}
+                          >
+                            重新连接
+                          </Button>
+                        </div>
+                      ) : loading ? (
+                        <div className="empty-state">
+                          <Loader2 className="animate-spin text-muted-foreground" />
+                          <p>正在打开本地书库</p>
+                        </div>
+                      ) : filter === "trash" ? (
+                        <TrashView documents={trash} />
+                      ) : filter === "tags" ? (
+                        <TagBoards
+                          documents={documents}
+                          query={query}
+                          jobs={jobs}
+                          processingError={processingError}
+                          openDocument={openDocument}
+                          favorite={favorite}
+                          onEdit={setEditingId}
+                          onSettings={() => setSettings(true)}
+                          onOverview={setOverviewDocument}
+                          onUsage={setUsageDocument}
+                          detailId={detail?.id}
+                          onDetail={setDetailId}
+                        />
+                      ) : filtered.length ? (
+                        <LibraryDocuments
+                          key={JSON.stringify([filter, query, filters])}
+                          documents={filtered}
+                          libraryView={libraryView}
+                          editing={editingLibrary}
+                          onEditingChange={setEditingLibrary}
+                          jobs={jobs}
+                          processingError={processingError}
+                          openDocument={openDocument}
+                          favorite={favorite}
+                          onEdit={setEditingId}
+                          onMove={moveDocument}
+                          onSettings={() => setSettings(true)}
+                          onOverview={setOverviewDocument}
+                          onUsage={setUsageDocument}
+                          activeId={detail?.id}
+                          onActivate={setDetailId}
+                        />
+                      ) : (
+                        <div className="empty-state">
+                          <div className="empty-books">
+                            <span>
+                              <FileText />
+                            </span>
+                            <span>
+                              <BookOpen />
+                            </span>
+                          </div>
+                          <h2>
+                            {documents.length
+                              ? "没有符合筛选条件的文档"
+                              : filter === "favorites"
+                                ? "暂无收藏"
+                                : papers
+                                  ? "暂无论文"
+                                  : "暂无文档"}
+                          </h2>
+                          {!!documents.length && (
+                            <Button
+                              variant="outline"
+                              onClick={() => {
+                                setFilters(initialFilters);
+                                setQuery("");
+                                setFilter("all");
+                              }}
+                            >
+                              显示全部文档
+                            </Button>
+                          )}
+                          {!documents.length && !papers && (
+                            <Button
+                              variant="link"
+                              onClick={() => void sample()}
+                              disabled={busy}
+                            >
+                              先体验示例文档 <ArrowUpRight className="size-3" />
+                            </Button>
+                          )}
+                        </div>
                       )}
                     </div>
+                  </div>
+                  {detail && (
+                    <ResizableBookDetail
+                      key={detail.id}
+                      doc={detail}
+                      actions={bookActions}
+                      open={openDocument}
+                      favorite={(doc) => void favorite(doc)}
+                    />
                   )}
                 </div>
               </main>
@@ -769,6 +836,16 @@ export function App() {
             onClose={() => setEditingId(null)}
           />
         )}
+        <DocumentOverviewDialog
+          key={overviewDocument?.id}
+          document={overviewDocument}
+          onClose={() => setOverviewDocument(null)}
+        />
+        <ProcessingUsageDialog
+          document={usageDocument}
+          job={jobs.find((job) => job.documentId === usageDocument?.id)}
+          onClose={() => setUsageDocument(null)}
+        />
         <Settings open={settings} onOpenChange={setSettings} />
         <ImportPaperDialog
           open={importingPaper}

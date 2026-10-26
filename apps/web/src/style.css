@@ -362,20 +362,38 @@ kbd {
   align-items: stretch;
   justify-content: space-between;
   width: 100%;
-  height: 263px;
+  /* Covers keep a 3:4 page shape however wide the grid column is. */
+  aspect-ratio: 3 / 4;
+  height: auto;
   padding: 22px 22px 18px;
   text-align: left;
   white-space: normal;
   border-radius: 7px;
   overflow: hidden;
+  --cover-shadow: 0 1px 3px rgb(0 0 0 / 8%), 0 6px 16px rgb(0 0 0 / 11%);
+  --cover-shadow-hover: 0 2px 5px rgb(0 0 0 / 9%), 0 10px 24px rgb(0 0 0 / 15%);
+  --cover-shadow-lifted:
+    0 8px 14px rgb(0 0 0 / 12%), 0 26px 46px rgb(0 0 0 / 24%);
   box-shadow:
-    0 4px 10px #00000009,
+    var(--cover-shadow),
     inset 5px 0 0 #ffffff23;
-  transition: box-shadow 180ms ease;
+  transition:
+    box-shadow 240ms ease,
+    transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+.dark .book-cover {
+  --cover-shadow: 0 1px 3px rgb(0 0 0 / 30%), 0 6px 16px rgb(0 0 0 / 34%);
+  --cover-shadow-hover:
+    0 2px 5px rgb(0 0 0 / 32%), 0 10px 24px rgb(0 0 0 / 40%);
+  --cover-shadow-lifted:
+    0 8px 14px rgb(0 0 0 / 38%), 0 26px 46px rgb(0 0 0 / 55%);
 }
 @media (hover: hover) and (pointer: fine) {
   .book-cover:hover {
-    box-shadow: 0 8px 18px rgb(0 0 0 / 12%);
+    transform: translateY(-6px);
+    box-shadow:
+      var(--cover-shadow-hover),
+      inset 5px 0 0 #ffffff23;
   }
 }
 .book-cover.cover-0 {
@@ -2221,7 +2239,6 @@ kbd {
   grid-row: 1 / span 5;
 }
 .book-list .book-cover {
-  height: 150px;
   padding: 12px;
 }
 .book-list .cover-title {
@@ -2263,6 +2280,102 @@ kbd {
 .book-card:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 5px;
+}
+/* The book shown in the detail panel lifts off the shelf. */
+.book-card[data-active="true"] .book-cover {
+  transform: translateY(-6px);
+  box-shadow:
+    var(--cover-shadow-lifted),
+    inset 5px 0 0 #ffffff23;
+}
+@media (prefers-reduced-motion: reduce) {
+  .book-cover {
+    transition: none;
+  }
+  .book-cover:hover,
+  .book-card[data-active="true"] .book-cover {
+    transform: none;
+  }
+}
+/* The book library scrolls its list beside a fixed detail panel. */
+.book-library {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.book-library > .library-topbar {
+  flex-shrink: 0;
+}
+.book-library-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+.book-list-pane {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+}
+.book-cover > .book-cover-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 160ms ease;
+}
+.book-cover > .book-cover-image[data-loaded="true"] {
+  opacity: 1;
+}
+/* A real cover replaces the drawn title page, including the placeholder
+   colour that would otherwise show through the button's transparent border. */
+.book-cover:has(> .book-cover-image[data-loaded="true"]) {
+  background: transparent;
+}
+.book-cover:has(> .book-cover-image[data-loaded="true"])
+  > :not(.book-cover-image) {
+  visibility: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .book-cover > .book-cover-image {
+    transition: none;
+  }
+}
+.book-detail-cover:not(:has(> .book-cover-image[data-loaded="true"])) {
+  display: none;
+}
+.book-detail-cover {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+.book-detail-cover > .book-cover-image {
+  width: 150px;
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 6px;
+  box-shadow:
+    0 4px 14px rgb(0 0 0 / 12%),
+    0 0 0 1px color-mix(in oklch, var(--foreground) 6%, transparent);
+}
+/* Star, edit and more share the row equally. */
+.book-detail-actions.book-detail-actions {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.book-detail-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 0;
+}
+.book-rating {
+  display: flex;
+  padding: 2px 0;
+}
+.book-rating [data-slot="button"] {
+  color: var(--muted-foreground);
 }
 .book-select {
   position: absolute;

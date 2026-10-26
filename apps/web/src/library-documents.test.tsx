@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "@neoread/api";
@@ -16,6 +16,8 @@ vi.mock("@neoread/api", () => ({
     processingUsage: vi.fn(),
     chatUsage: vi.fn(),
   },
+  coverURL: (id: string) => `/cover/${id}`,
+  publicationURL: (id: string, resource: string) => `/pub/${id}/${resource}`,
 }));
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
@@ -47,9 +49,12 @@ const docs: Document[] = ["Alpha", "Beta"].map((title, i) => ({
 }));
 let root: Root, host: HTMLDivElement;
 const open = vi.fn(),
-  edit = vi.fn();
+  edit = vi.fn(),
+  overview = vi.fn();
+let withDetail = false;
 function Harness() {
   const documents = useReaderStore((s) => s.documents);
+  const [active, setActive] = useState<string | null>(null);
   return (
     <LibraryDocuments
       documents={documents}
@@ -60,6 +65,9 @@ function Harness() {
       favorite={() => {}}
       onEdit={edit}
       onSettings={() => {}}
+      onOverview={overview}
+      onUsage={() => {}}
+      {...(withDetail ? { activeId: active, onActivate: setActive } : {})}
     />
   );
 }
@@ -102,6 +110,7 @@ afterEach(async () => {
   await act(async () => root.unmount());
   host.remove();
   vi.unstubAllGlobals();
+  withDetail = false;
 });
 const button = (label: string) =>
   [...document.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -203,4 +212,49 @@ it("requires edit mode before selecting and clears selection on exit", async () 
   expect(host.querySelector('[role="checkbox"]')).toBeNull();
   await act(async () => button("编辑").click());
   expect(host.textContent).toContain("已选 0 份");
+});
+
+it("opens a document on click without a detail panel", async () => {
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="打开 Alpha"]')!.click(),
+  );
+  expect(open).toHaveBeenCalledExactlyOnceWith(docs[0]);
+});
+
+it("shows details on click and opens on double click", async () => {
+  withDetail = true;
+  await act(async () => root.render(<Harness />));
+  const [alpha, beta] = host.querySelectorAll("article");
+  const cover = alpha.querySelector<HTMLButtonElement>(".book-cover")!;
+  await act(async () => cover.click());
+  expect(open).not.toHaveBeenCalled();
+  expect(alpha.dataset.active).toBe("true");
+  await act(async () =>
+    beta.querySelector<HTMLButtonElement>(".book-title")!.click(),
+  );
+  expect(alpha.dataset.active).toBe("false");
+  expect(beta.dataset.active).toBe("true");
+  // The second click of a double click keeps the selection.
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+  );
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })),
+  );
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+  );
+  expect(alpha.dataset.active).toBe("true");
+  expect(open).toHaveBeenCalledExactlyOnceWith(docs[0]);
+  // Card actions do not change the selection.
+  await act(async () =>
+    beta.querySelector<HTMLButtonElement>('[aria-label="收藏文档"]')!.click(),
+  );
+  expect(alpha.dataset.active).toBe("true");
+  await act(async () =>
+    alpha.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Escape", bubbles: true }),
+    ),
+  );
+  expect(alpha.dataset.active).toBe("false");
 });

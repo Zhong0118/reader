@@ -73,11 +73,13 @@ it("recommends cleanup, but records keeping data when postponed", async () => {
     completed,
   );
   expect(mocks.dialog.mock.calls[0][1]).toMatchObject({
-    buttons: ["稍后手动删除", "立即删除"],
+    buttons: ["稍后清理", "立即清理"],
     defaultId: 1,
     cancelId: 0,
   });
-  expect(mocks.dialog.mock.calls[0][1].detail).toContain("不会卸载 App");
+  expect(mocks.dialog.mock.calls[0][1].detail).toContain(
+    "其他未迁移文件会保留",
+  );
   expect(mocks.dialog.mock.calls[0][1].detail).toContain("外置自定义书库");
   expect(mocks.exec.mock.calls[0][1]).toContain("keep");
 });

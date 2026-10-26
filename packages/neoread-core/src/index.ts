@@ -117,6 +117,8 @@ export interface PaperMetadata {
   language?: string;
   /** The reader's own note on the item; never looked up. */
   remark?: string;
+  /** The reader's own 1–5 star rating; absent or 0 when unrated. */
+  rating?: number;
   /** Where each field came from; lookups never replace manual values. */
   sources?: Partial<Record<string, MetadataSource>>;
   /** Automatic lookup state for papers imported from files. */
@@ -223,6 +225,10 @@ export interface LibraryPreferences {
   primaryMode?: LibraryMode;
   mode?: LibraryMode;
   papers?: PaperLibraryPreferences;
+  books?: {
+    /** Width of the book detail panel in CSS pixels. */
+    detailWidth?: number;
+  };
 }
 /** First-run guide and release notes, stored with the library. */
 export interface GuidePreferences {
