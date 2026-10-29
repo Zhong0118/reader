@@ -142,7 +142,7 @@ func main() {
 			server.SetCitePlugins(*citePlugins)
 			if *citeCredential == "" {
 				if config, configErr := os.UserConfigDir(); configErr == nil {
-					*citeCredential = filepath.Join(config, "Reader", "cite-credential")
+					*citeCredential = filepath.Join(config, "NeoRead", "cite-credential")
 				}
 			}
 			if *citeCredential != "" {

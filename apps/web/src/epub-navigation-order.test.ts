@@ -72,3 +72,22 @@ it("uses spine order and DOM anchor offsets for same-chapter headings and bookma
   });
   expect(mocks.chapter).toHaveBeenCalledTimes(1);
 });
+
+it("displays a large TOC from the spine without fetching chapter bodies", async () => {
+  mocks.chapter.mockClear();
+  const chapters = Array.from({ length: 812 }, (_, index) => ({
+    href: `c${index}.xhtml`,
+    blocks: [],
+  }));
+  const toc: TOCItem[] = chapters.map((c, index) => ({
+    id: String(index),
+    label: String(index),
+    location: { type: "epub", href: `${c.href}#body` },
+    children: [],
+  }));
+  mocks.chapters.mockResolvedValue({ chapters });
+  const orders = await epubNavigationOrders("large", toc, [], undefined, false);
+  expect(Object.keys(orders)).toHaveLength(812);
+  expect(orders["811"]).toEqual([811, 0]);
+  expect(mocks.chapter).not.toHaveBeenCalled();
+});

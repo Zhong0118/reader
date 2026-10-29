@@ -204,13 +204,22 @@ func (s *Store) enqueueDocument(d Document) error {
 	return e
 }
 func (s *Server) processingList(w http.ResponseWriter, r *http.Request) {
+	books, e := s.Store.bookLayoutJobs()
+	if e != nil {
+		fail(w, 500, "无法读取解析进度")
+		return
+	}
 	rows, e := s.Store.DB.Query("SELECT body FROM document_processing ORDER BY rowid DESC")
 	if e != nil {
 		fail(w, 500, "无法读取解析进度")
 		return
 	}
 	defer rows.Close()
-	out := []Processing{}
+	type processingView struct {
+		Processing
+		BookLayout *bookLayoutProgress `json:"bookLayout,omitempty"`
+	}
+	out := []processingView{}
 	for rows.Next() {
 		var b string
 		var p Processing
@@ -219,7 +228,11 @@ func (s *Server) processingList(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalizeNoTextProcessing(&p)
-		out = append(out, p)
+		view := processingView{Processing: p}
+		if job, ok := books[p.DocumentID]; ok {
+			view.BookLayout = &job
+		}
+		out = append(out, view)
 	}
 	respond(w, 200, out)
 }
@@ -273,6 +286,9 @@ func (s *Server) documentBlocks(w http.ResponseWriter, r *http.Request) {
 	if e != nil {
 		fail(w, 404, "文档不存在")
 		return
+	}
+	if d.Library == "books" {
+		_ = s.Store.prioritizeBookLayout(d.ID)
 	}
 	manifest, e := s.readLayout(d.ID)
 	if e != nil {
@@ -425,6 +441,11 @@ func (s *Server) StartProcessing(parent context.Context) func() {
 				}
 				work, finish, startErr := s.beginDocumentTask(workContext, p.DocumentID)
 				if startErr != nil {
+					// An exclusive reparse may begin between selecting this job and
+					// registering its task. Leave it runnable for the next poll.
+					p.Status = "queued"
+					p.Detail = "等待继续处理"
+					_ = s.Store.saveProcessing(p)
 					s.finishProcessingTask(p.DocumentID, task)
 					continue
 				}
@@ -468,6 +489,8 @@ func (s *Server) StartProcessing(parent context.Context) func() {
 	}
 	workers.Add(1)
 	go func() { defer workers.Done(); s.corpusWorker(ctx) }()
+	workers.Add(1)
+	go func() { defer workers.Done(); s.bookLayoutWorker(ctx) }()
 	workers.Add(1)
 	go func() { defer workers.Done(); s.overviewWorker(ctx) }()
 	workers.Add(1)

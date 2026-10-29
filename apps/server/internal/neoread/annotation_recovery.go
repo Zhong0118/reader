@@ -112,6 +112,26 @@ func (s *Server) recoverAnnotations(w http.ResponseWriter, r *http.Request) {
 		respond(w, 200, map[string]bool{"checked": false})
 		return
 	}
+	// Opening an EPUB with only source notes does not need a full translation
+	// source scan. Recovery only rewrites translation marks and legacy links.
+	var sourceOnlyEPUB bool
+	err = s.Store.DB.QueryRowContext(ctx, `SELECT type='epub' AND NOT EXISTS (
+	 SELECT 1 FROM annotations WHERE document_id=? AND
+	 (json_type(body,'$.location.translation') IS NOT NULL OR json_type(body,'$.location.sentenceLink') IS NOT NULL)
+	) FROM documents WHERE id=?`, document, document).Scan(&sourceOnlyEPUB)
+	if err != nil {
+		fail(w, 500, "无法读取批注检查状态")
+		return
+	}
+	if sourceOnlyEPUB {
+		_, err = s.Store.DB.ExecContext(ctx, "INSERT INTO annotation_recovery(document_id,checked) VALUES(?,1) ON CONFLICT(document_id) DO UPDATE SET checked=1", document)
+		if err != nil {
+			fail(w, 500, "无法保存批注检查状态")
+			return
+		}
+		respond(w, 200, map[string]bool{"checked": true})
+		return
+	}
 	m, err := s.readTranslationSource(document)
 	if err != nil || len(m.translationParagraphs()) == 0 {
 		respond(w, 200, map[string]bool{"checked": false})

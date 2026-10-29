@@ -31,7 +31,8 @@ vi.mock("pdfjs-dist", () => ({
 }));
 vi.mock("./diagnostics", () => ({ reportDiagnostic: vi.fn() }));
 
-import { BookDetail, ResizableBookDetail } from "./BookDetail";
+import { BookDetail, saveBookDetailWidth } from "./BookDetail";
+import { DetailSheet } from "./DetailSheet";
 import { BookCoverImage } from "./book-cover";
 import { useReaderStore } from "./store";
 
@@ -205,28 +206,42 @@ it("renders and stores the first page of a PDF without a cover", async () => {
   for (const img of images) expect(img.getAttribute("src")).toBe("/cover/p1?v");
 });
 
-it("resizes the detail panel and keeps the width", async () => {
+it("resizes the detail sheet and keeps the width", async () => {
   const doc = book();
   mocks.savePreferences.mockResolvedValue({});
   useReaderStore.setState({
     documents: [doc],
     libraryPreferences: { books: { detailWidth: 400 } },
   });
-  await act(async () =>
-    root.render(
-      <ResizableBookDetail
-        doc={doc}
-        actions={actions}
-        open={() => {}}
-        favorite={() => {}}
-      />,
-    ),
-  );
+  function Sheet() {
+    const width = useReaderStore(
+      (s) => s.libraryPreferences.books?.detailWidth,
+    );
+    return (
+      <DetailSheet
+        open
+        onClose={() => {}}
+        container={host}
+        label="图书详情"
+        width={width}
+        saveWidth={saveBookDetailWidth}
+      >
+        <BookDetail
+          doc={doc}
+          actions={actions}
+          open={() => {}}
+          favorite={() => {}}
+        />
+      </DetailSheet>
+    );
+  }
+  await act(async () => root.render(<Sheet />));
   const handle = host.querySelector<HTMLElement>('[role="separator"]')!;
-  const panel = host.querySelector<HTMLElement>(".book-detail")!;
+  const sheet = host.querySelector<HTMLElement>(".detail-sheet")!;
+  expect(sheet.querySelector(".book-detail")).not.toBeNull();
   expect(handle.getAttribute("aria-valuenow")).toBe("400");
-  expect(panel.style.getPropertyValue("--paper-detail-width")).toBe("400px");
-  vi.spyOn(panel, "getBoundingClientRect").mockReturnValue({
+  expect(sheet.style.getPropertyValue("--paper-detail-width")).toBe("400px");
+  vi.spyOn(sheet, "getBoundingClientRect").mockReturnValue({
     width: 400,
   } as DOMRect);
   await act(async () =>
@@ -240,5 +255,80 @@ it("resizes the detail panel and keeps the width", async () => {
   expect(mocks.savePreferences).toHaveBeenCalledWith(
     expect.objectContaining({ books: { detailWidth: 416 } }),
   );
-  expect(panel.style.getPropertyValue("--paper-detail-width")).toBe("416px");
+  expect(sheet.style.getPropertyValue("--paper-detail-width")).toBe("416px");
+});
+
+it("shows only real tags and edits them directly from book details", async () => {
+  const doc = book();
+  useReaderStore.setState({ documents: [doc] });
+  const selectTag = vi.fn();
+  await act(async () =>
+    root.render(
+      <BookDetail
+        doc={doc}
+        actions={actions}
+        open={() => {}}
+        favorite={() => {}}
+        onSelectTag={selectTag}
+      />,
+    ),
+  );
+  expect(host.querySelector('[aria-label="编辑文档信息"]')).toBeNull();
+  expect(host.querySelector('[aria-label="标签"]')?.textContent).toContain(
+    "#系统",
+  );
+  expect(host.querySelector('[aria-label="标签"]')?.textContent).not.toContain(
+    "书籍",
+  );
+  await act(async () =>
+    [...host.querySelectorAll("button")]
+      .find((button) => button.textContent === "#系统")!
+      .click(),
+  );
+  expect(selectTag).toHaveBeenCalledWith("系统");
+  await act(async () => field("删除标签 系统").click());
+  expect(mocks.update).toHaveBeenCalledWith("b1", { tags: [] });
+  await act(async () =>
+    root.render(
+      <BookDetail
+        doc={useReaderStore.getState().documents[0]}
+        actions={actions}
+        open={() => {}}
+        favorite={() => {}}
+        onSelectTag={selectTag}
+      />,
+    ),
+  );
+  await act(async () => field("添加标签").click());
+  const input =
+    document.querySelector<HTMLInputElement>('[aria-label="标签名"]')!;
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "阅读");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await act(async () =>
+    input
+      .closest("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
+  expect(mocks.update).toHaveBeenCalledWith("b1", { tags: ["阅读"] });
+});
+
+it("shows PDF page counts in book information", async () => {
+  const doc = book({ type: "pdf" });
+  await act(async () =>
+    root.render(
+      <BookDetail
+        doc={doc}
+        actions={actions}
+        open={() => {}}
+        favorite={() => {}}
+        pages={320}
+      />,
+    ),
+  );
+  expect(host.textContent).toContain("320 页");
 });

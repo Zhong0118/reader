@@ -76,7 +76,7 @@ await cp(
 await cp(join(root, "apps/web/dist"), join(staging, "web"), {
   recursive: true,
 });
-// Citation plugins: the WPS add-in served by Reader and the Word template.
+// Citation plugins: the WPS add-in served by NeoRead and the Word template.
 const plugins = join(root, "apps/cite-plugins");
 await cp(join(plugins, "wps"), join(staging, "cite-plugins/wps"), {
   recursive: true,
@@ -84,14 +84,14 @@ await cp(join(plugins, "wps"), join(staging, "cite-plugins/wps"), {
 });
 await mkdir(join(staging, "cite-plugins/word"), { recursive: true });
 await cp(
-  join(plugins, "word/ReaderCite.applescript"),
-  join(staging, "cite-plugins/word/ReaderCite.applescript"),
+  join(plugins, "word/NeoReadCite.applescript"),
+  join(staging, "cite-plugins/word/NeoReadCite.applescript"),
 );
 await cp(
-  join(plugins, "word/Reader.dotm"),
-  join(staging, "cite-plugins/word/Reader.dotm"),
+  join(plugins, "word/NeoRead.dotm"),
+  join(staging, "cite-plugins/word/NeoRead.dotm"),
 ).catch(() =>
-  console.warn("Reader.dotm is missing; the Word plugin is not packaged."),
+  console.warn("NeoRead.dotm is missing; the Word plugin is not packaged."),
 );
 await mkdir(join(staging, "bin"));
 for (const name of ["neoread-server", "neoread"]) {

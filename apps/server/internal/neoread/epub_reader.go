@@ -120,8 +120,17 @@ func renderEPUBChapter(href, source, resources string) (string, epubTranslationD
 			return
 		}
 		target := parent
-		if epubElements[n.Data] && n.Data != "body" {
+		bodyAnchor := false
+		if n.Data == "body" {
+			for _, a := range n.Attr {
+				bodyAnchor = bodyAnchor || (a.Namespace == "" && a.Key == "id" && a.Val != "")
+			}
+		}
+		if epubElements[n.Data] && (n.Data != "body" || bodyAnchor) {
 			tag := n.Data
+			if tag == "body" {
+				tag = "div"
+			}
 			if tag == "image" {
 				tag = "img"
 			}
@@ -383,6 +392,7 @@ func unsupportedEPUBStyle(source string, markup bool) bool {
 
 func (s *Server) epubChapters(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	summary := r.URL.Query().Get("summary") == "1"
 	manifest, err := s.readerManifest(id)
 	if err != nil {
 		fail(w, 404, "无法读取 EPUB 目录")
@@ -398,7 +408,7 @@ func (s *Server) epubChapters(w http.ResponseWriter, r *http.Request) {
 		if e != nil {
 			continue
 		}
-		if link.Type == "text/css" || strings.Contains(link.Type, "html") {
+		if link.Type == "text/css" || !summary && strings.Contains(link.Type, "html") {
 			data, _ := os.ReadFile(filepath.Join(s.Store.Root, "cache", id, filepath.FromSlash(name)))
 			if unsupportedEPUBStyle(string(data), link.Type != "text/css") {
 				unsupported = true
@@ -414,6 +424,17 @@ func (s *Server) epubChapters(w http.ResponseWriter, r *http.Request) {
 		if link.Type != "application/xhtml+xml" && link.Type != "text/html" {
 			fail(w, 422, "暂不支持此 EPUB 的章节版式")
 			return
+		}
+		if summary {
+			// File size supplies a stable scroll/progress estimate without parsing text.
+			count := 1000
+			if name, e := safeResource(link.Href); e == nil {
+				if stat, e := os.Stat(filepath.Join(s.Store.Root, "cache", id, filepath.FromSlash(name))); e == nil {
+					count = max(1, int(stat.Size())/2)
+				}
+			}
+			chapters = append(chapters, epubReaderChapter{link.Href, link.Title, i, count, epubTranslationDocument{}})
+			continue
 		}
 		_, blocks, e := s.readerChapter(id, link.Href)
 		if e != nil {
@@ -439,13 +460,27 @@ func (s *Server) epubChapterHTML(w http.ResponseWriter, r *http.Request) {
 		if link.Href != href {
 			continue
 		}
-		rendered, _, err := s.readerChapter(id, href)
+		name, e := safeResource(href)
+		if e != nil {
+			fail(w, 404, "无效章节")
+			return
+		}
+		source, e := os.ReadFile(filepath.Join(s.Store.Root, "cache", id, filepath.FromSlash(name)))
+		if e != nil {
+			fail(w, 500, "无法读取 EPUB 章节")
+			return
+		}
+		if unsupportedEPUBLayout(manifest.Metadata) || unsupportedEPUBLayout(link.Properties) || unsupportedEPUBStyle(string(source), true) {
+			fail(w, 422, "暂不支持固定版式、竖排或从右向左阅读的 EPUB")
+			return
+		}
+		rendered, blocks, err := renderEPUBChapter(href, string(source), "/pub/"+url.PathEscape(s.Token)+"/"+url.PathEscape(id)+"/")
 		if err != nil {
 			fail(w, 500, "无法读取 EPUB 章节")
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
-		respond(w, 200, map[string]string{"html": rendered})
+		respond(w, 200, map[string]any{"html": rendered, "blocks": blocks})
 		return
 	}
 	fail(w, 404, "该章节不属于当前书籍")

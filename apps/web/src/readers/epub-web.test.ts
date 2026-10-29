@@ -78,6 +78,7 @@ let events: {
   selection: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
   annotation: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
   annotationHover: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
+  epubBlocksChanged: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
   epubReadingAnchor: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
   epubInteraction: ReturnType<typeof vi.fn<(...args: unknown[]) => void>>;
 };
@@ -181,6 +182,7 @@ beforeEach(() => {
     selection: vi.fn(),
     annotation: vi.fn(),
     annotationHover: vi.fn(),
+    epubBlocksChanged: vi.fn(),
     epubReadingAnchor: vi.fn(),
     epubInteraction: vi.fn(),
   };
@@ -668,9 +670,13 @@ it("unloads distant chapter DOM into its measured height without loading every c
       blocks: [block(`block-${i}`, "Chapter text.", href)],
     };
   });
-  vi.mocked(api.epubChapters).mockResolvedValue({ chapters: many, toc: [] });
+  vi.mocked(api.epubChapters).mockResolvedValue({
+    chapters: many.map((c) => ({ ...c, blocks: [] })),
+    toc: [],
+  });
   vi.mocked(api.epubChapter).mockImplementation(async (_id, href) => ({
     html: html(many.find((c) => c.href === href)!.blocks),
+    blocks: many.find((c) => c.href === href)!.blocks,
   }));
   await open();
   // Simulate a measured long first chapter and a distant navigation.
@@ -686,6 +692,25 @@ it("unloads distant chapter DOM into its measured height without loading every c
   expect((host.children[0] as HTMLElement).style.height).toBe("9000px");
   expect(vi.mocked(api.epubChapter).mock.calls.length).toBeLessThan(12);
   expect(host.children.length).toBe(12);
+  expect(
+    (events.epubBlocksChanged.mock.calls.at(-1)![0] as EPUBReadingBlock[]).some(
+      (b) => b.id === "block-0",
+    ),
+  ).toBe(false);
+  // Translation-only navigation cannot rely on source scroll observers.
+  vi.spyOn(host, "clientHeight", "get").mockReturnValue(0);
+  await reader.goTo({ type: "epub", href: many[5].href });
+  expect(
+    (events.epubBlocksChanged.mock.calls.at(-1)![0] as EPUBReadingBlock[]).map(
+      (b) => b.location.href,
+    ),
+  ).toEqual(many.slice(4, 7).map((c) => c.href));
+  await reader.goTo({ type: "epub", href: many[3].href });
+  expect(
+    (events.epubBlocksChanged.mock.calls.at(-1)![0] as EPUBReadingBlock[]).map(
+      (b) => b.location.href,
+    ),
+  ).toEqual(many.slice(2, 5).map((c) => c.href));
 });
 
 it("does not load all chapter placeholders when the source pane is hidden", async () => {
@@ -776,4 +801,70 @@ it("emits note hover independently of selection/click and clears it on leaving",
   expect(events.selection).not.toHaveBeenCalled();
   host.dispatchEvent(new MouseEvent("pointerleave"));
   expect(events.annotationHover).toHaveBeenLastCalledWith(null);
+});
+
+it("opens from metadata without loading distant text and resolves an unloaded search hit on demand", async () => {
+  vi.mocked(api.epubChapters).mockResolvedValue({
+    chapters: chapters.map((c) => ({ ...c, blocks: [] })),
+    toc: [],
+  });
+  vi.mocked(api.epubChapter).mockImplementation(async (_id, href) => {
+    const blocks = chapters.find((c) => c.href === href)!.blocks;
+    return { html: html(blocks), blocks };
+  });
+  await open();
+  expect(api.epubChapter).toHaveBeenCalledTimes(1);
+  expect(await reader.getContext()).toContain(a.text);
+  await reader.highlight([
+    {
+      id: "distant",
+      kind: "highlight",
+      quote: c.text,
+      location: c.location,
+      color: "#e6b94c",
+    } as Annotation,
+  ]);
+  expect(toast.error).not.toHaveBeenCalled();
+  vi.mocked(api.search).mockResolvedValue([
+    { id: "hit", excerpt: c.text, location: { type: "epub", href: "b.xhtml" } },
+  ]);
+  const hits = await reader.search("Only here");
+  expect(hits[0].location).toMatchObject({ href: "b.xhtml", blockId: "c" });
+  expect(host.querySelector('[data-epub-block="c"]')).toBeNull();
+  await reader.goTo(hits[0].location);
+  expect(host.querySelector('[data-epub-block="c"]')).not.toBeNull();
+});
+
+it("loads intervening chapters when restoring a range whose endpoints are already loaded", async () => {
+  const parts = Array.from({ length: 4 }, (_, i) => ({
+    href: `c${i}.xhtml`,
+    title: String(i),
+    index: i,
+    characters: 100,
+    blocks: [block(`p${i}`, `Text ${i}.`, `c${i}.xhtml`)],
+  }));
+  vi.mocked(api.epubChapters).mockResolvedValue({
+    chapters: parts.map((c) => ({ ...c, blocks: [] })),
+    toc: [],
+  });
+  vi.mocked(api.epubChapter).mockImplementation(async (_id, href) => {
+    const blocks = parts.find((c) => c.href === href)!.blocks;
+    return { html: html(blocks), blocks };
+  });
+  await open();
+  await reader.goTo({ type: "epub", href: "c3.xhtml" });
+  expect(host.querySelector('[data-epub-block="p1"]')).toBeNull();
+  await reader.goTo({
+    type: "epub",
+    href: "c0.xhtml",
+    blockId: "p0",
+    endBlockId: "p3",
+    endHref: "c3.xhtml",
+    start: 0,
+    end: 7,
+    quote: "Text 0.Text 1.Text 2.Text 3.",
+  });
+  expect(window.getSelection()?.toString()).toBe(
+    "Text 0.Text 1.Text 2.Text 3.",
+  );
 });

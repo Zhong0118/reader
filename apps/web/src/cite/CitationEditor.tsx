@@ -93,6 +93,11 @@ export function CitationEditor({
     () => initial?.citationItems.map((item) => ({ ...item })) || [],
   );
   const [unsorted, setUnsorted] = useState(!!initial?.properties.unsorted);
+  const [suppressAuthor, setSuppressAuthor] = useState(
+    () =>
+      !!initial?.citationItems.length &&
+      initial.citationItems.every((item) => item["suppress-author"]),
+  );
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const search = useRef<HTMLInputElement>(null);
@@ -119,7 +124,13 @@ export function CitationEditor({
   }, [engine, items, unsorted, before, after]);
 
   const add = (doc: Document) => {
-    setItems((list) => [...list, citationItemFor(doc)]);
+    setItems((list) => [
+      ...list,
+      {
+        ...citationItemFor(doc),
+        ...(suppressAuthor ? { "suppress-author": true } : {}),
+      },
+    ]);
     setQuery("");
     setActive(0);
     search.current?.focus();
@@ -209,7 +220,7 @@ export function CitationEditor({
             ))
           ) : (
             <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-              {query.trim() ? "没有匹配的论文" : "论文库中还没有论文"}
+              {query.trim() ? "没有匹配的论文" : "没有其他论文啦～"}
             </p>
           )}
         </div>
@@ -305,35 +316,47 @@ export function CitationEditor({
                       onChange={(e) => change(i, { suffix: e.target.value })}
                     />
                   </div>
-                  <label className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-                    <Checkbox
-                      checked={!!item["suppress-author"]}
-                      onCheckedChange={(checked) =>
-                        change(i, { "suppress-author": !!checked })
-                      }
-                    />
-                    省略作者
-                  </label>
                 </li>
               );
             })}
           </ol>
         )}
-        {items.length > 1 && (
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={unsorted}
-              onCheckedChange={(checked) => setUnsorted(!!checked)}
-            />
-            保持所选顺序
-          </label>
+        {items.length > 0 && (
+          <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
+            {items.length > 1 && (
+              <label className="flex items-center gap-2 text-sm">
+                <Checkbox
+                  checked={unsorted}
+                  onCheckedChange={(checked) => setUnsorted(!!checked)}
+                />
+                保持所选顺序
+              </label>
+            )}
+            <label className="flex items-center gap-2 text-sm">
+              <Checkbox
+                checked={suppressAuthor}
+                onCheckedChange={(checked) => {
+                  setSuppressAuthor(!!checked);
+                  setItems((list) =>
+                    list.map((item) => {
+                      const next = { ...item };
+                      if (checked) next["suppress-author"] = true;
+                      else delete next["suppress-author"];
+                      return next;
+                    }),
+                  );
+                }}
+              />
+              省略作者
+            </label>
+          </div>
         )}
         {preview && (
-          <p
-            className="rounded-md bg-muted px-3 py-2 text-sm break-words"
-            aria-label="预览"
-          >
-            <RunsText runs={preview} />
+          <p className="rounded-md bg-muted px-3 py-2 text-sm break-words">
+            <span className="text-muted-foreground">引注样式预览：</span>
+            <span aria-label="预览">
+              <RunsText runs={preview} />
+            </span>
           </p>
         )}
         <DialogFooter>

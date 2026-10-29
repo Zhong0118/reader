@@ -66,12 +66,22 @@ const adapter = {
   getContext: vi.fn(async () => ""),
   destroy: vi.fn(async () => {}),
   setEPUBBlocks: vi.fn(),
+  getEPUBChapters: () =>
+    ["a.xhtml", "b.xhtml"].map((href, index) => ({
+      href,
+      index,
+      title: href,
+      characters: 32,
+      blocks: [],
+    })),
   fitColumn: vi.fn(async () => {}),
   stopColumnFit: vi.fn(),
   followBlock: vi.fn(async () => {}),
   focusSentences: vi.fn(async () => {}),
   focusEPUBLocations: vi.fn(async () => {}),
   hoverBlock: vi.fn(),
+  focusBlock: vi.fn(async () => {}),
+  cancelBlockFocus: vi.fn(),
 } as unknown as ReaderAdapter;
 vi.mock("../ReaderView", () => ({
   ReaderView: ({
@@ -82,7 +92,10 @@ vi.mock("../ReaderView", () => ({
     onReady: (a: ReaderAdapter, t: []) => void;
   }) => {
     fixture.events = events;
-    useEffect(() => onReady(adapter, []), []);
+    useEffect(() => {
+      events.epubBlocksChanged?.(blocks);
+      onReady(adapter, []);
+    }, []);
     return <div>EPUB 原文</div>;
   },
 }));
@@ -187,7 +200,7 @@ it("supports all modes and chapter navigation without PDF page locations", async
     expect.objectContaining({ type: "epub", href: "b.xhtml" }),
     expect.any(Number),
   );
-  expect(adapter.goTo).not.toHaveBeenCalled();
+  expect(adapter.goTo).toHaveBeenCalledWith({ type: "epub", href: "b.xhtml" });
   expect(await fixture.ready!.getContext()).toBe(blocks[1].text);
   expect(adapter.getContext).not.toHaveBeenCalled();
   await click("原文译文");
@@ -406,6 +419,49 @@ it("follows source block anchors and scrolls the source to the translated block 
   );
 });
 
+it("links block hover and focuses a clicked block in both panes", async () => {
+  await click("原文译文");
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+  const pane = host.querySelector<HTMLElement>(".translation-document")!;
+  Object.defineProperty(pane, "clientHeight", { value: 400 });
+  pane.getBoundingClientRect = () => new DOMRect(0, 0, 400, 400);
+  const section = () =>
+    pane.querySelector<HTMLElement>('[data-translation-block="e-b"]')!;
+  section().getBoundingClientRect = () => new DOMRect(0, 600, 400, 100);
+  await act(async () => fixture.events!.epubBlockHover?.("e-b"));
+  expect(section().dataset.hovered).toBe("true");
+  await act(async () => fixture.events!.epubBlockHover?.(null));
+  expect(section().dataset.hovered).toBeUndefined();
+  await act(async () =>
+    section().dispatchEvent(new MouseEvent("pointermove", { bubbles: true })),
+  );
+  expect(adapter.hoverBlock).toHaveBeenLastCalledWith("e-b");
+  vi.mocked(adapter.goTo).mockClear();
+  vi.stubGlobal("matchMedia", () => ({
+    matches: true,
+    addEventListener() {},
+    removeEventListener() {},
+  }));
+  await act(async () => fixture.events!.epubBlockFocus?.("e-b"));
+  expect(adapter.focusBlock).toHaveBeenCalledWith("e-b", "parallel");
+  // Centered: 600 - (400 - 100) / 2.
+  expect(pane.scrollTop).toBe(450);
+  expect(events.location).toHaveBeenLastCalledWith(
+    expect.objectContaining({ href: "b.xhtml" }),
+    expect.any(Number),
+  );
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 30)));
+  expect(section().dataset.focused).toBeUndefined();
+  // Programmatic centering never drives the source back.
+  expect(adapter.goTo).not.toHaveBeenCalled();
+  await act(async () =>
+    section().dispatchEvent(
+      new MouseEvent("click", { bubbles: true, detail: 0 }),
+    ),
+  );
+  expect(adapter.focusBlock).toHaveBeenCalledTimes(2);
+});
+
 it("initializes chapter context in memory without saving progress on open", async () => {
   expect(fixture.ready!.getLocation()).toMatchObject({
     type: "epub",
@@ -413,4 +469,17 @@ it("initializes chapter context in memory without saving progress on open", asyn
   });
   expect(await fixture.ready!.getContext()).toBe(blocks[0].text);
   expect(events.location).not.toHaveBeenCalled();
+});
+
+it("uses only the reader's loaded blocks and subscribes only to their chapters", async () => {
+  const { api } = await import("@neoread/api");
+  expect(api.epubBlocks).not.toHaveBeenCalled();
+  await act(async () => fixture.events!.epubBlocksChanged?.([blocks[1]]));
+  expect(host.querySelector('[data-chapter="a.xhtml"]')).toBeNull();
+  expect(api.translationStream).toHaveBeenLastCalledWith(
+    "doc",
+    expect.any(AbortSignal),
+    expect.any(Function),
+    ["b.xhtml"],
+  );
 });

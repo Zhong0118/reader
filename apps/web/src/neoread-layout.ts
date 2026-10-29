@@ -8,6 +8,7 @@ const defaults: ReaderLayout = {
   assistantOpen: true,
   sourceWidth: 50,
   swapped: false,
+  stacked: false,
 };
 
 /** Old libraries and invalid saved values keep the existing reader defaults. */
@@ -22,8 +23,9 @@ export function readerLayout(value: ReaderTheme["readerLayout"]): ReaderLayout {
       ? n
       : defaults[key];
   };
-  const flag = (key: "navigationOpen" | "assistantOpen" | "swapped") =>
-    typeof value?.[key] === "boolean" ? value[key] : defaults[key];
+  const flag = (
+    key: "navigationOpen" | "assistantOpen" | "swapped" | "stacked",
+  ) => (typeof value?.[key] === "boolean" ? value[key] : defaults[key]);
   return {
     navigationWidth: width("navigationWidth", 30),
     assistantWidth: width("assistantWidth", 45),
@@ -31,6 +33,7 @@ export function readerLayout(value: ReaderTheme["readerLayout"]): ReaderLayout {
     assistantOpen: flag("assistantOpen"),
     sourceWidth: width("sourceWidth", 80, 20),
     swapped: flag("swapped"),
+    stacked: flag("stacked"),
   };
 }
 

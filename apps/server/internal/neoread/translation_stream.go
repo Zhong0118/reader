@@ -25,12 +25,49 @@ func (s *Server) streamTranslations(w http.ResponseWriter, r *http.Request) {
 		fail(w, 404, "文档不存在")
 		return
 	}
+	hrefs := r.URL.Query()["href"]
+	var m translationInput
+	var sourceErr error
+	var allowed map[string]bool
+	if d.Type == "epub" && len(hrefs) > 0 {
+		manifest, e := s.readerManifest(d.ID)
+		valid := map[string]bool{}
+		for _, link := range manifest.ReadingOrder {
+			valid[link.Href] = true
+		}
+		for _, href := range hrefs {
+			if e != nil || !valid[href] {
+				fail(w, 404, "该章节不属于当前书籍")
+				return
+			}
+		}
+		seen := map[string]bool{}
+		blocks := epubTranslationDocument{}
+		for _, href := range hrefs {
+			if seen[href] {
+				continue
+			}
+			seen[href] = true
+			_, chapter, err := s.readerChapter(d.ID, href)
+			if err != nil {
+				fail(w, 500, "无法读取 EPUB 章节")
+				return
+			}
+			blocks = append(blocks, chapter...)
+		}
+		m = blocks
+		allowed = map[string]bool{}
+		for _, item := range m.translationItems() {
+			allowed[item.BlockID] = true
+		}
+	} else {
+		m, sourceErr = s.readTranslationSource(d.ID)
+	}
 	s.translationMu.Lock()
-	m, sourceErr := s.readTranslationSource(d.ID)
 	if sourceErr != nil {
 		m = layoutManifest{}
 	}
-	items, err := s.visibleTranslations(d.ID, m)
+	items, err := s.translationRecords(d.ID, m, true, allowed != nil)
 	if err != nil {
 		s.translationMu.Unlock()
 		fail(w, 500, "无法读取译文")
@@ -79,7 +116,13 @@ func (s *Server) streamTranslations(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case block, ok := <-ch:
-			if !ok || send("translation", block) != nil {
+			if !ok {
+				return
+			}
+			if allowed != nil && !allowed[block.BlockID] {
+				continue
+			}
+			if send("translation", block) != nil {
 				return
 			}
 		case <-heartbeat.C:

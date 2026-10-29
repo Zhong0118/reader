@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const { runCommand } = require("./protocol.js");
-const { createDocument, readerCode } = require("./word-document.js");
+const { createDocument, neoReadCode } = require("./word-document.js");
 
 const MAIN = 1;
 const FOOTNOTES = 2;
@@ -159,11 +159,11 @@ function fakeWord() {
   };
 }
 
-it("recognizes Reader codes with or without ADDIN", () => {
-  expect(readerCode(" ADDIN READER_CITATION {} ")).toBe("READER_CITATION {}");
-  expect(readerCode("READER_BIBLIOGRAPHY")).toBe("READER_BIBLIOGRAPHY");
-  expect(readerCode(" ADDIN ZOTERO_ITEM CSL_CITATION {} ")).toBeNull();
-  expect(readerCode(" PAGE ")).toBeNull();
+it("recognizes NeoRead codes with or without ADDIN", () => {
+  expect(neoReadCode(" ADDIN NEOREAD_CITATION {} ")).toBe("NEOREAD_CITATION {}");
+  expect(neoReadCode("NEOREAD_BIBLIOGRAPHY")).toBe("NEOREAD_BIBLIOGRAPHY");
+  expect(neoReadCode(" ADDIN ZOTERO_ITEM CSL_CITATION {} ")).toBeNull();
+  expect(neoReadCode(" PAGE ")).toBeNull();
 });
 
 it("inserts, formats and reads back fields in reading order", () => {
@@ -182,7 +182,7 @@ it("inserts, formats and reads back fields in reading order", () => {
     updates: [
       {
         index: 0,
-        code: 'READER_CITATION {"a":1}',
+        code: 'NEOREAD_CITATION {"a":1}',
         text: [
           { text: "(Vaswani " },
           { text: "et al.", i: true },
@@ -201,16 +201,16 @@ it("inserts, formats and reads back fields in reading order", () => {
   ).toEqual({ index: 0 });
   const state = document.execute({ op: "Document.getState" });
   expect(state.fields).toEqual([
-    { code: "READER_TEMP", text: "{Citation}", noteIndex: 1 },
+    { code: "NEOREAD_TEMP", text: "{Citation}", noteIndex: 1 },
     {
-      code: 'READER_CITATION {"a":1}',
+      code: 'NEOREAD_CITATION {"a":1}',
       text: "(Vaswani et al., 2017)",
       noteIndex: 0,
     },
   ]);
   // The selection moved past the new note reference.
   expect(state.fieldsBefore).toBe(1);
-  expect(word.mainFields[0].Code.Text).toBe(' ADDIN READER_CITATION {"a":1} ');
+  expect(word.mainFields[0].Code.Text).toBe(' ADDIN NEOREAD_CITATION {"a":1} ');
   const start = word.mainFields[0].Result.Start;
   expect(word.formats).toEqual([
     { start: start + 9, end: start + 15, key: "Italic", value: true },
@@ -241,9 +241,9 @@ it("splits document data into 255-character properties", () => {
   const data = JSON.stringify({ text: "x".repeat(600) });
   document.execute({ op: "Document.setData", data });
   expect(word.props.map((p) => p.Name)).toEqual([
-    "READER_PREF_1",
-    "READER_PREF_2",
-    "READER_PREF_3",
+    "NEOREAD_PREF_1",
+    "NEOREAD_PREF_2",
+    "NEOREAD_PREF_3",
   ]);
   expect(document.execute({ op: "Document.getState" }).data).toBe(data);
   document.execute({ op: "Document.setData", data: "" });
@@ -263,7 +263,7 @@ it("writes bibliography entries as paragraphs and unlinks fields", () => {
     updates: [
       {
         index: 0,
-        code: "READER_BIBLIOGRAPHY {}",
+        code: "NEOREAD_BIBLIOGRAPHY {}",
         bibliography: {
           entries: [[{ text: "[1]\tA." }], [{ text: "[2]\tB." }]],
           format: {
@@ -289,7 +289,7 @@ it("writes bibliography entries as paragraphs and unlinks fields", () => {
   expect(field.unlinked).toBe(true);
 });
 
-it("runs a command until Reader completes it and reports errors", async () => {
+it("runs a command until NeoRead completes it and reports errors", async () => {
   const word = fakeWord();
   const document = createDocument(word.app);
   const sent = [];
@@ -323,7 +323,7 @@ it("runs a command until Reader completes it and reports errors", async () => {
   });
   expect(sent[3][1]).toEqual({
     transaction: "t",
-    error: "插件版本过旧，请在 Reader 设置中重新安装",
+    error: "插件版本过旧，请在 NeoRead 设置中重新安装",
   });
 });
 
@@ -368,7 +368,7 @@ function threeCitations() {
     const field = word.doc.Fields.Add(
       { StoryType: MAIN, Start: 100 * (i + 1) },
       -1,
-      "ADDIN READER_CITATION " + name,
+      "ADDIN NEOREAD_CITATION " + name,
     );
     field.Result.Text = name;
   }
@@ -384,43 +384,43 @@ it.each(["update", "delete", "unlink"])(
     const [, b, c] = word.mainFields;
     word.mainFields[0].Delete();
     const op = operation === "update"
-      ? { op: "Document.updateFields", updates: [{ index: 1, code: "READER_CITATION changed", text: [{ text: "changed" }] }] }
+      ? { op: "Document.updateFields", updates: [{ index: 1, code: "NEOREAD_CITATION changed", text: [{ text: "changed" }] }] }
       : { op: "Document.removeFields", indexes: [1], keepText: operation === "unlink" };
     expect(() => document.execute(op)).toThrow("文档中的域已改变");
     expect(word.mainFields).toEqual([b, c]);
     expect(b.Result.Text).toBe("B");
     expect(c.Result.Text).toBe("C");
-    expect(c.Code.Text).toContain("READER_CITATION C");
+    expect(c.Code.Text).toContain("NEOREAD_CITATION C");
   },
 );
 
 it("validates every field before applying any updates", () => {
   const { word, document } = threeCitations();
-  word.mainFields[2].Code.Text = "ADDIN READER_CITATION edited";
+  word.mainFields[2].Code.Text = "ADDIN NEOREAD_CITATION edited";
   expect(() => document.execute({
     op: "Document.updateFields",
     updates: [
-      { index: 0, code: "READER_CITATION changed" },
-      { index: 2, code: "READER_CITATION overwritten" },
+      { index: 0, code: "NEOREAD_CITATION changed" },
+      { index: 2, code: "NEOREAD_CITATION overwritten" },
     ],
   })).toThrow("文档中的域已改变");
-  expect(word.mainFields[0].Code.Text).toContain("READER_CITATION A");
-  expect(word.mainFields[2].Code.Text).toContain("READER_CITATION edited");
+  expect(word.mainFields[0].Code.Text).toContain("NEOREAD_CITATION A");
+  expect(word.mainFields[2].Code.Text).toContain("NEOREAD_CITATION edited");
 });
 
 it("rejects invalid batch indexes before writing valid entries", () => {
   const { word, document } = threeCitations();
   expect(() => document.execute({
     op: "Document.updateFields",
-    updates: [{ index: 0, code: "READER_CITATION changed" }, { index: 3, code: "READER_CITATION invalid" }],
+    updates: [{ index: 0, code: "NEOREAD_CITATION changed" }, { index: 3, code: "NEOREAD_CITATION invalid" }],
   })).toThrow("文档中的域已改变");
-  expect(word.mainFields[0].Code.Text).toContain("READER_CITATION A");
+  expect(word.mainFields[0].Code.Text).toContain("NEOREAD_CITATION A");
 });
 
 it("detects a replacement even when the field count stays unchanged", () => {
   const { word, document } = threeCitations();
   word.mainFields[1].Delete();
-  word.doc.Fields.Add({ StoryType: MAIN, Start: 200 }, -1, "ADDIN READER_CITATION replacement");
+  word.doc.Fields.Add({ StoryType: MAIN, Start: 200 }, -1, "ADDIN NEOREAD_CITATION replacement");
   expect(() => document.execute({ op: "Document.removeFields", indexes: [1], keepText: false }))
     .toThrow("文档中的域已改变");
   expect(word.mainFields).toHaveLength(3);
@@ -430,7 +430,7 @@ it("detects a replacement even when the field count stays unchanged", () => {
 it("keeps captured fields valid when ordinary text shifts their ranges", () => {
   const { word, document } = threeCitations();
   for (const field of word.mainFields) field.Code.Start += 20;
-  document.execute({ op: "Document.updateFields", updates: [{ index: 1, code: "READER_CITATION changed" }] });
+  document.execute({ op: "Document.updateFields", updates: [{ index: 1, code: "NEOREAD_CITATION changed" }] });
   document.execute({ op: "Document.removeFields", indexes: [1], keepText: true });
   expect(word.mainFields.map((field) => field.Result.Text)).toEqual(["A", "C"]);
 });
@@ -440,4 +440,38 @@ it("validates removal indexes before deleting any field", () => {
   expect(() => document.execute({ op: "Document.removeFields", indexes: [0, 3], keepText: false }))
     .toThrow("文档中的域已改变");
   expect(word.mainFields).toHaveLength(3);
+});
+
+
+it("preserves mixed legacy field codes and detects prefix-only edits", () => {
+  const word = fakeWord();
+  word.doc.Fields.Add({ StoryType: MAIN, Start: 20 }, -1, "ADDIN READER_CITATION old");
+  word.doc.Fields.Add({ StoryType: MAIN, Start: 60 }, -1, "ADDIN NEOREAD_BIBLIOGRAPHY {}");
+  const document = createDocument(word.app);
+  expect(document.execute({ op: "Document.getState" }).fields.map((f) => f.code)).toEqual([
+    "READER_CITATION old", "NEOREAD_BIBLIOGRAPHY {}",
+  ]);
+  word.mainFields[0].Code.Text = "ADDIN NEOREAD_CITATION old";
+  expect(() => document.execute({ op: "Document.updateFields", updates: [{ index: 0, code: "NEOREAD_CITATION changed" }] })).toThrow("文档中的域已改变");
+  document.execute({ op: "Document.getState" });
+  document.execute({ op: "Document.updateFields", updates: [{ index: 0, code: "NEOREAD_CITATION changed" }] });
+  expect(word.mainFields[0].Code.Text).toContain("NEOREAD_CITATION changed");
+  expect(neoReadCode("ADDIN READER_TEMP")).toBe("READER_TEMP");
+});
+
+it("reads legacy preference chunks, prefers new chunks and removes both on save", () => {
+  const word = fakeWord();
+  const props = word.doc.CustomDocumentProperties;
+  props.Add("READER_PREF_2", false, 4, "two");
+  props.Add("READER_PREF_1", false, 4, "one");
+  props.Add("OTHER", false, 4, "keep");
+  const document = createDocument(word.app);
+  expect(document.execute({ op: "Document.getState" }).data).toBe("onetwo");
+  props.Add("NEOREAD_PREF_1", false, 4, "new");
+  expect(document.execute({ op: "Document.getState" }).data).toBe("new");
+  document.execute({ op: "Document.setData", data: "saved" });
+  expect(word.props.map((p) => p.Name)).toEqual(["OTHER", "NEOREAD_PREF_1"]);
+  expect(document.execute({ op: "Document.getState" }).data).toBe("saved");
+  document.execute({ op: "Document.setData", data: "" });
+  expect(word.props.map((p) => p.Name)).toEqual(["OTHER"]);
 });

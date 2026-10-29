@@ -1,9 +1,9 @@
-# Builds Reader.dotm from ReaderCite.bas and customUI14.xml with Word for Windows.
+# Builds NeoRead.dotm from NeoReadCite.bas and customUI14.xml with Word for Windows.
 # Requires Word and, in Word, File > Options > Trust Center > Trust Center
 # Settings > Macro Settings > "Trust access to the VBA project object model".
-param([string]$Output = (Join-Path $PSScriptRoot "Reader.dotm"))
+param([string]$Output = (Join-Path $PSScriptRoot "NeoRead.dotm"))
 $ErrorActionPreference = "Stop"
-$module = Join-Path $PSScriptRoot "ReaderCite.bas"
+$module = Join-Path $PSScriptRoot "NeoReadCite.bas"
 $ribbon = Join-Path $PSScriptRoot "customUI14.xml"
 if (Test-Path $Output) { Remove-Item $Output }
 
@@ -28,7 +28,7 @@ try {
   $reader = New-Object System.IO.StreamReader($rels.Open())
   $xml = $reader.ReadToEnd()
   $reader.Close()
-  $relation = '<Relationship Id="readerRibbon" Type="http://schemas.microsoft.com/office/2007/relationships/ui/extensibility" Target="customUI/customUI14.xml"/>'
+  $relation = '<Relationship Id="neoreadRibbon" Type="http://schemas.microsoft.com/office/2007/relationships/ui/extensibility" Target="customUI/customUI14.xml"/>'
   $xml = $xml.Replace("</Relationships>", "$relation</Relationships>")
   $rels.Delete()
   $writer = New-Object System.IO.StreamWriter($zip.CreateEntry("_rels/.rels").Open(), (New-Object System.Text.UTF8Encoding($false)))

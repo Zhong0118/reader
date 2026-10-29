@@ -1,10 +1,10 @@
 # Word / WPS 引用插件调研与设计
 
-调研日期：2026-10-13。目标：为 Word 和 WPS 提供与 Zotero 文字处理器插件功能对齐的引用插件，引用数据来自 Reader 论文库。本文区分 Zotero 的事实（来自其文档与源码）和 Reader 的设计建议；尚未实现，也未做真实 Word/WPS 验证。
+调研日期：2026-10-13。目标：为 Word 和 WPS 提供与 Zotero 文字处理器插件功能对齐的引用插件，引用数据来自 NeoRead 论文库。本文区分 Zotero 的事实（来自其文档与源码）和 NeoRead 的设计建议；尚未实现，也未做真实 Word/WPS 验证。
 
 已确定的范围：
 
-- 不兼容 Zotero 的域代码。Reader 使用自己的前缀，文档中的 Zotero 引注不识别、不转换。
+- 不兼容 Zotero 的域代码。NeoRead 使用自己的前缀，文档中的 Zotero 引注不识别、不转换。
 - 同时支持 Microsoft Word（Windows、macOS 桌面版）和 WPS 文字。
 - 支持全部 CSL 样式，分阶段交付。
 
@@ -44,28 +44,28 @@
 
 **WPS 的做法。** Zotero 官方不支持 WPS。社区的 WPS-Zotero 是 WPS 文字 JS 加载项，经 Zotero 的 HTTP 协议工作，域格式与 Word 相同；因 Zotero 的端点不提供 CORS，需要额外运行 Python 代理。加载项通过 `jsaddons` 目录中的 `publish.xml`、`jsplugins.xml` 注册，入口地址为 `http://127.0.0.1:3889/`，Windows 目录 `%APPDATA%\kingsoft\wps\jsaddons`，Linux `~/.local/share/Kingsoft/wps/jsaddons`。[WPS-Zotero][wps-zotero] [安装脚本][wps-zotero-install] 另一条路线是把 `Zotero.dotm` 放进 WPS 启动目录走 VBA，但需要付费版 WPS 的 VBA 环境。[WPS 说明][zc-wps]
 
-## Reader 的设计
+## NeoRead 的设计
 
 ### 结构
 
 ```
-Word (Reader.dotm 宏)  ─┐
+Word (NeoRead.dotm 宏)  ─┐
                         ├─ HTTP 127.0.0.1:17841 /v1/cite/* ─ Go 服务（鉴权、事务队列）
 WPS (JS 加载项)        ─┘                                       │ SSE
                                                                  ▼
-                                    Reader 窗口：引用会话（citeproc-js）+ 引注对话框
+                                    NeoRead 窗口：引用会话（citeproc-js）+ 引注对话框
 ```
 
-沿用 Zotero 的分工：客户端只执行文档操作，排版和交互都在 Reader。
+沿用 Zotero 的分工：客户端只执行文档操作，排版和交互都在 NeoRead。
 
-1. **客户端。** Word 端是 `Reader.dotm`（功能区 + VBA），Windows 与 macOS 共用同一份 VBA，自己实现 Document/Field 操作，不需要原生库。WPS 端是 JS 加载项，用 WPS 的 JS API 实现同一组操作。两端只是同一协议的两个执行器。
-2. **传输。** Windows VBA 用 `MSXML2.XMLHTTP` 直连。macOS Word 在沙盒内，VBA 通过 `AppleScriptTask` 调用 `~/Library/Application Scripts/com.microsoft.Word/` 下的脚本发请求。WPS 加载项由 Reader 在同一端口直接提供（`/wps/`），页面与 API 同源，不需要代理和 CORS。
-3. **Go 服务**复用连接器端口 17841，新增 `/v1/cite/execCommand`、`/v1/cite/respond`。它只做鉴权、单事务控制和消息转发；通过新增的 SSE 通道把命令推给 Reader 窗口，再把窗口给出的下一项操作作为 HTTP 响应返回客户端。
-4. **引用会话在 Reader 窗口内。** 窗口里已有 citation-js、论文库数据和 shadcn 组件，对话框与 citeproc-js 放在一起，不需要在 Go 或 Electron 主进程里再嵌入一个 JS 引擎。命令到达时窗口置前，完成后把焦点还给 Word/WPS。代价是 Reader 必须在运行；未运行时客户端提示启动 Reader。
+1. **客户端。** Word 端是 `NeoRead.dotm`（功能区 + VBA），Windows 与 macOS 共用同一份 VBA，自己实现 Document/Field 操作，不需要原生库。WPS 端是 JS 加载项，用 WPS 的 JS API 实现同一组操作。两端只是同一协议的两个执行器。
+2. **传输。** Windows VBA 用 `MSXML2.XMLHTTP` 直连。macOS Word 在沙盒内，VBA 通过 `AppleScriptTask` 调用 `~/Library/Application Scripts/com.microsoft.Word/` 下的脚本发请求。WPS 加载项由 NeoRead 在同一端口直接提供（`/wps/`），页面与 API 同源，不需要代理和 CORS。
+3. **Go 服务**复用连接器端口 17841，新增 `/v1/cite/execCommand`、`/v1/cite/respond`。它只做鉴权、单事务控制和消息转发；通过新增的 SSE 通道把命令推给 NeoRead 窗口，再把窗口给出的下一项操作作为 HTTP 响应返回客户端。
+4. **引用会话在 NeoRead 窗口内。** 窗口里已有 citation-js、论文库数据和 shadcn 组件，对话框与 citeproc-js 放在一起，不需要在 Go 或 Electron 主进程里再嵌入一个 JS 引擎。命令到达时窗口置前，完成后把焦点还给 Word/WPS。代价是 NeoRead 必须在运行；未运行时客户端提示启动 NeoRead。
 
 ### 协议
 
-与 Zotero 的 HTTP 协议同构，便于对照，但字段名和端点是 Reader 自己的：
+与 Zotero 的 HTTP 协议同构，便于对照，但字段名和端点是 NeoRead 自己的：
 
 ```
 POST /v1/cite/execCommand {command, documentId, client} → {op: "Document.getState", transaction}
@@ -74,18 +74,18 @@ POST /v1/cite/next        {transaction}                 → 收到 Document.wait
 ```
 
 - 命令（M1）：`addEditCitation`、`addEditBibliography`、`setDocPrefs`、`refresh`、`removeCodes`。
-- 操作（M1）：`Document.getState`（全部 Reader 域的代码、文字、注释序号，光标所在域，光标前的域数，文档数据，能否插入）、`Document.insertField`、`Document.updateFields`（批量）、`Document.removeFields`、`Document.setData`。粒度比 Zotero 粗，减少 VBA/AppleScript 的往返次数。实现见 `apps/web/src/cite/protocol.ts`。
-- Reader 窗口一侧：`GET /api/cite/events`（SSE）收到命令，`POST /api/cite/transactions/{id}/call` 发出一项操作并等待结果，`…/complete` 结束。
+- 操作（M1）：`Document.getState`（全部 NeoRead 域的代码、文字、注释序号，光标所在域，光标前的域数，文档数据，能否插入）、`Document.insertField`、`Document.updateFields`（批量）、`Document.removeFields`、`Document.setData`。粒度比 Zotero 粗，减少 VBA/AppleScript 的往返次数。实现见 `apps/web/src/cite/protocol.ts`。
+- NeoRead 窗口一侧：`GET /api/cite/events`（SSE）收到命令，`POST /api/cite/transactions/{id}/call` 发出一项操作并等待结果，`…/complete` 结束。
 - 文本写入不传 RTF/HTML，传格式片段 `[{text, i, b, sup, sub, sc}]`，由宏或 JS 逐段设置字体。Word 宏插入富文本在两个平台上行为不一致，片段方式更可控。
 - Word 的 VBA 没有 JSON 解析（macOS 上也没有 Dictionary），发给 Word 的操作另附一份按行、制表符分隔的编码（`vba` 字段，`apps/web/src/cite/vba.ts`）；WPS 端直接读 JSON。VBA 回复时自己拼 JSON。
-- 对话框可能开很久，而 Windows 的 XMLHTTP、macOS 的 curl 都有超时，所以请求不长时间挂起：20 秒内没有下一项操作时返回 `Document.wait`，客户端再请求 `/v1/cite/next`。Windows 上等待期间执行 `DoEvents`，Word 仍可响应；macOS 的 `AppleScriptTask` 是同步的，Word 会等待。Reader 窗口关闭或客户端断开时结束事务。
+- 对话框可能开很久，而 Windows 的 XMLHTTP、macOS 的 curl 都有超时，所以请求不长时间挂起：20 秒内没有下一项操作时返回 `Document.wait`，客户端再请求 `/v1/cite/next`。Windows 上等待期间执行 `DoEvents`，Word 仍可响应；macOS 的 `AppleScriptTask` 是同步的，Word 会等待。NeoRead 窗口关闭或客户端断开时结束事务。
 - 一个事务进行中时，新的 `execCommand` 返回 409 并把对话框置前。
 
 ### 文档数据
 
-- 引注域：`ADDIN READER_CITATION {json}`。JSON 结构沿用 csl-citation schema，`uris` 为 `reader://paper/<文档ID>`，另存 DOI、arXiv 编号用于匹配，始终内嵌完整 `itemData`。
-- 参考文献表域：`ADDIN READER_BIBLIOGRAPHY {"uncited":[],"omitted":[]}`。
-- 文档首选项：自定义属性 `READER_PREF_1…n`，单个属性值有长度上限，按块切分；JSON，带 `dataVersion`。
+- 引注域：`ADDIN NEOREAD_CITATION {json}`。JSON 结构沿用 csl-citation schema，`uris` 为 `neoread://paper/<文档ID>`，另存 DOI、arXiv 编号用于匹配，始终内嵌完整 `itemData`。
+- 参考文献表域：`ADDIN NEOREAD_BIBLIOGRAPHY {"uncited":[],"omitted":[]}`。
+- 文档首选项：自定义属性 `NEOREAD_PREF_1…n`，单个属性值有长度上限，按块切分；JSON，带 `dataVersion`。
 - 条目解析顺序：文档 ID → DOI → 内嵌 `itemData`（孤立条目，只能排版，不能编辑题录）。合并重复论文后的映射尚未接入。
 - 生成 `itemData` 时补 `language`：用户未设置时按标题与作者是否含汉字推断 `zh-CN` / `en-US`。双语 GB/T 7714 样式依赖它选择“等”或“et al.”。
 - 手动修改检测：记录 `plainCitation`，刷新时发现文本不同则询问是否保留，保留后写入 `dontUpdate`。
@@ -109,16 +109,16 @@ POST /v1/cite/next        {transaction}                 → 收到 Document.wait
 
 | 阶段 | 内容 |
 | --- | --- |
-| M1 | 协议、鉴权、Go 事务队列、SSE；Word Windows/macOS 的 `Reader.dotm` 与安装；添加/编辑引注（搜索论文库、多篇、定位符/前后缀/省略作者、排序）；参考文献表插入与自动更新；文档首选项（样式、语言、自动更新）；刷新；取消链接；S1 样式 |
+| M1 | 协议、鉴权、Go 事务队列、SSE；Word Windows/macOS 的 `NeoRead.dotm` 与安装；添加/编辑引注（搜索论文库、多篇、定位符/前后缀/省略作者、排序）；参考文献表插入与自动更新；文档首选项（样式、语言、自动更新）；刷新；取消链接；S1 样式 |
 | M2 | WPS JS 加载项（Windows、Linux；macOS 先验证 WPS 是否支持 JS 加载项）；手动修改检测；孤立条目；延迟更新 |
 | M3 | 注释样式与脚注/尾注（S2）；参考文献表编辑（`uncited`、`omitted`）；按分类浏览模式；快捷键；S3 |
 | M4 | 添加笔记：插入论文笔记或批注原文并附引注；S4 全量样式库；期刊缩写 |
 
 ### 安装与安全
 
-- 设置页提供“安装 Word 插件”“安装 WPS 插件”，安装、卸载、升级由 Reader 完成，并检测 Word/WPS 是否正在运行。
+- 设置页提供“安装 Word 插件”“安装 WPS 插件”，安装、卸载、升级由 NeoRead 完成，并检测 Word/WPS 是否正在运行。
 - 位置：Word Windows `%APPDATA%\Microsoft\Word\STARTUP`；Word macOS `~/Library/Group Containers/UBF8T346G9.Office/User Content/Startup/Word/`，另放 AppleScript 到 `~/Library/Application Scripts/com.microsoft.Word/`；WPS 写入 `jsaddons` 的注册 XML，入口为 `http://127.0.0.1:17841/wps/`。
-- 鉴权：VBA 请求不带 Origin，不能沿用扩展的来源校验。占用 17841 端口的 Reader 进程每次启动生成新凭据，写入固定位置 `<用户配置目录>/Reader/cite-credential`（0600），Word 端每次请求时读取（Windows 由 VBA 读，macOS 由 AppleScript 读）。开发版和正式版共用这个位置，因为只有占用端口的进程会写。WPS 安装程序将用户专属随机密钥保存到 `Reader/cite-wps-key` 和该用户的登记文件。服务端校验 `/wps/<安装密钥>/` 路径中的密钥才提供资源；页面通过认证的 `POST /v1/cite/bootstrap` 获取当前运行令牌，不再把令牌写入 HTML。密钥文件和登记文件在 Unix 上限制为 0600，Windows 依赖当前用户 AppData 的 ACL；资源禁止缓存并设置 `Referrer-Policy: no-referrer`，日志只记录路由模板；`/v1/cite/*` 只额外接受 `http://127.0.0.1:17841` 同源请求。
+- 鉴权：VBA 请求不带 Origin，不能沿用扩展的来源校验。占用 17841 端口的 NeoRead 进程每次启动生成新凭据，写入固定位置 `<用户配置目录>/NeoRead/cite-credential`（0600），Word 端每次请求时读取（Windows 由 VBA 读，macOS 由 AppleScript 读）。开发版和正式版共用这个位置，因为只有占用端口的进程会写。WPS 安装程序将用户专属随机密钥保存到 `NeoRead/cite-wps-key` 和该用户的登记文件。服务端校验 `/wps/<安装密钥>/` 路径中的密钥才提供资源；页面通过认证的 `POST /v1/cite/bootstrap` 获取当前运行令牌，不再把令牌写入 HTML。密钥文件和登记文件在 Unix 上限制为 0600，Windows 依赖当前用户 AppData 的 ACL；资源禁止缓存并设置 `Referrer-Policy: no-referrer`，日志只记录路由模板；`/v1/cite/*` 只额外接受 `http://127.0.0.1:17841` 同源请求。
 - 文档内容（引注文本、域代码）只在本机传递，不联网。
 - 不复制 Zotero（AGPL）和 WPS-Zotero（GPL-3.0）的代码，只参考公开协议与文档格式独立实现。
 
@@ -150,3 +150,9 @@ POST /v1/cite/next        {transaction}                 → 收到 Document.wait
 - [Zotero Word for Windows 集成][zt-win]、[Zotero Word for Mac 集成][zt-mac]
 - [Zotero integration.js][zt-integration]、[HTTP 集成端点][zt-http]、[csl-citation schema][csl-citation]
 - [WPS-Zotero][wps-zotero]、[安装脚本][wps-zotero-install]、[zotero-chinese 样式][zc-styles]
+
+## NeoRead 品牌迁移兼容
+
+Word 与 WPS 继续读取旧 `READER_CITATION`、`READER_BIBLIOGRAPHY`、`READER_TEMP` 域和 `READER_PREF_n` 偏好；新旧偏好同时存在时优先读取 `NEOREAD_PREF_n`，保存时移除旧偏好并只写新名称。读取的域码保留旧前缀原文用于冲突校验，刷新或编辑写回 `NEOREAD_` 格式，论文 URI 写为 `neoread://paper/…`。历史 `reader://paper/…` URI 仍可读取。
+
+仓库现有 `apps/cite-plugins/word/Reader.dotm` 二进制保持原样，尚不包含此次迁移。发布前需用户在 Word 中手动导入 `NeoReadCite.bas`（移除旧 `ReaderCite` 模块），重建 `NeoRead.dotm`，加入新的功能区 XML，并完成 Word 回归和上述手动验收。

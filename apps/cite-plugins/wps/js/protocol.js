@@ -1,10 +1,10 @@
-// Runs one Reader citation command: Reader answers each request with the next
+// Runs one NeoRead citation command: NeoRead answers each request with the next
 // document operation until it sends Document.complete. Shared by the WPS
 // add-in and the protocol tests; plain script, no modules.
 (function (root) {
   "use strict";
 
-  const UNREACHABLE = "无法连接 Reader。请先启动 Reader 桌面版，再重试。";
+  const UNREACHABLE = "无法连接 NeoRead。请先启动 NeoRead 桌面版，再重试。";
 
   function createTransport(credential, base) {
     return async function post(path, body) {
@@ -23,7 +23,7 @@
       }
       const data = await response.json().catch(() => ({}));
       if (!response.ok)
-        throw new Error(data.error || "Reader 返回错误 " + response.status);
+        throw new Error(data.error || "NeoRead 返回错误 " + response.status);
       return data;
     };
   }
@@ -32,7 +32,7 @@
    * @param {{command: string, documentId: string, client: string,
    *   document: {execute(op: object): unknown, activate(): void},
    *   post(path: string, body: object): Promise<any>}} options
-   * @returns {Promise<string>} An error message from Reader, or "".
+   * @returns {Promise<string>} An error message from NeoRead, or "".
    */
   async function runCommand(options) {
     let op = await options.post("/v1/cite/execCommand", {
@@ -41,7 +41,7 @@
       client: options.client,
     });
     while (op && op.op !== "Document.complete") {
-      // Reader is waiting for the user; ask again for the next operation.
+      // NeoRead is waiting for the user; ask again for the next operation.
       if (op.op === "Document.wait") {
         op = await options.post("/v1/cite/next", {
           transaction: op.transaction,
@@ -79,6 +79,6 @@
   }
 
   const api = { createTransport, runCommand, bootstrap, UNREACHABLE };
-  root.ReaderCiteProtocol = api;
+  root.NeoReadCiteProtocol = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis === "object" ? globalThis : this);

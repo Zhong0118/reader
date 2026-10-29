@@ -47,13 +47,57 @@ const commands: CiteCommand[] = [
   "removeCodes",
 ];
 
+/** Dialog widths in the standalone window, matching their usual max widths. */
+const dialogWidths: Record<Request["kind"], number> = {
+  citation: 672,
+  prefs: 448,
+  confirm: 384,
+  alert: 384,
+};
+// Transparent margin around the dialog, as in `max-w-[calc(100%-2rem)]`.
+const margin = 32;
+
+/** Sizes the standalone window to the open dialog, then shows it. */
+function fitCitationWindow(width: number) {
+  const desktop = window.neoreadDesktop;
+  let frame = 0;
+  let observer: ResizeObserver | undefined;
+  let shown = false;
+  const attach = () => {
+    const popup = document.querySelector<HTMLElement>(
+      ':is([data-slot="dialog-content"], [data-slot="alert-dialog-content"])[data-open]',
+    );
+    if (!popup) {
+      frame = requestAnimationFrame(attach);
+      return;
+    }
+    observer = new ResizeObserver(() => {
+      void desktop
+        ?.setCitationSize?.(width + margin, popup.offsetHeight + margin)
+        .then(() => {
+          // Show only once the dialog has its final width.
+          if (shown || popup.offsetWidth !== width) return;
+          shown = true;
+          return desktop.setCitationVisible?.(true);
+        })
+        .catch(() => {});
+    });
+    observer.observe(popup);
+  };
+  attach();
+  return () => {
+    cancelAnimationFrame(frame);
+    observer?.disconnect();
+  };
+}
+
 const focusWindow = () => void window.neoreadDesktop?.focusWindow?.();
 
 /**
  * Receives commands from the Word and WPS plugins and runs them with the
  * library open in this window. Dialogs take focus; refreshes run unseen.
  */
-export function CiteHost() {
+export function CiteHost({ standalone = false }: { standalone?: boolean }) {
   const [request, setRequest] = useState<Request | null>(null);
   const documents = useReaderStore((s) => s.documents);
 
@@ -61,8 +105,24 @@ export function CiteHost() {
     const controller = new AbortController();
     // An object, so the cleanup below sees assignments made inside `run`.
     const active: {
-      current: { transaction: string; cancel: () => void } | null;
+      current: {
+        transaction: string;
+        cancel: () => void;
+        dismiss: () => void;
+        asking: () => boolean;
+      } | null;
     } = { current: null };
+
+    const removeClose = standalone
+      ? window.neoreadDesktop?.onCitationClose?.(() =>
+          active.current?.dismiss(),
+        )
+      : undefined;
+    // The standalone window shows itself once the dialog is measured.
+    const show = () =>
+      standalone
+        ? void window.neoreadDesktop?.setCitationVisible?.(true)
+        : focusWindow();
 
     const run = async (
       event: Extract<CiteEvent, { type: "command" }>,
@@ -72,6 +132,8 @@ export function CiteHost() {
       let pending: (() => void) | null = null;
       active.current = {
         transaction,
+        dismiss: () => pending?.(),
+        asking: () => pending !== null,
         cancel: () => {
           cancelled = true;
           pending?.();
@@ -85,8 +147,12 @@ export function CiteHost() {
       ) =>
         new Promise<T>((resolve) => {
           if (cancelled) return resolve(cancelValue);
-          focusWindow();
-          pending = () => resolve(cancelValue);
+          if (!standalone) show();
+          pending = () => {
+            pending = null;
+            setRequest(null);
+            resolve(cancelValue);
+          };
           setRequest(
             make((value) => {
               pending = null;
@@ -130,7 +196,9 @@ export function CiteHost() {
       let error = "";
       try {
         if (!commands.includes(event.command as CiteCommand))
-          throw new Error("Reader 版本过旧，不支持这个命令");
+          throw new Error("NeoRead 版本过旧，不支持这个命令");
+        if (standalone)
+          useReaderStore.getState().setDocuments(await api.documents());
         // citeproc loads with the first command, not with the app.
         const { CiteSession } = await import("./session");
         await new CiteSession(
@@ -144,6 +212,10 @@ export function CiteHost() {
       } finally {
         active.current = null;
         setRequest(null);
+        if (standalone)
+          await window.neoreadDesktop
+            ?.setCitationVisible?.(false)
+            .catch(() => {});
         if (!cancelled)
           await api
             .citeComplete(transaction, { activate: true, error })
@@ -152,8 +224,9 @@ export function CiteHost() {
     };
 
     const onEvent = (event: CiteEvent) => {
-      if (event.type === "focus") focusWindow();
-      else if (event.type === "aborted") {
+      if (event.type === "focus") {
+        if (!standalone || active.current?.asking()) show();
+      } else if (event.type === "aborted") {
         if (active.current?.transaction === event.transaction) {
           active.current.cancel();
           toast.info("文字处理软件已断开，本次操作已取消");
@@ -174,9 +247,15 @@ export function CiteHost() {
     })();
     return () => {
       controller.abort();
+      removeClose?.();
       active.current?.cancel();
     };
-  }, []);
+  }, [standalone]);
+
+  useEffect(() => {
+    if (!standalone || !request) return;
+    return fitCitationWindow(dialogWidths[request.kind]);
+  }, [standalone, request]);
 
   if (!request) return null;
   if (request.kind === "citation")

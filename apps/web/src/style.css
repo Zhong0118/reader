@@ -215,6 +215,32 @@
 svg:is(.lucide-trash, .lucide-trash-2) {
   color: var(--destructive);
 }
+:is(button, [role="menuitem"]):has(> svg:is(.lucide-trash, .lucide-trash-2)) {
+  color: var(--destructive) !important;
+}
+/* The citation window is transparent and sized to its dialog. */
+html[data-citation-window],
+html[data-citation-window] body {
+  background: transparent;
+}
+html[data-citation-window]
+  :is([data-slot="dialog-overlay"], [data-slot="alert-dialog-overlay"]) {
+  display: none;
+}
+html[data-citation-window]
+  :is([data-slot="dialog-content"], [data-slot="alert-dialog-content"]) {
+  max-width: calc(100% - 2rem);
+}
+/* Without a title bar, the dialog header moves the window. */
+html[data-citation-window]
+  :is([data-slot="dialog-header"], [data-slot="alert-dialog-header"]) {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+html[data-citation-window] :is(button, input, select, textarea, a) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
 kbd {
   font-size: 10px;
   font-family: inherit;
@@ -692,7 +718,8 @@ kbd {
   padding: 3px 8px 56px;
   user-select: none;
 }
-.navigation-selection-toolbar {
+.navigation-selection-toolbar,
+.navigation-collapse-toolbar {
   position: absolute;
   bottom: 12px;
   left: 12px;
@@ -706,8 +733,16 @@ kbd {
   color: var(--foreground);
   box-shadow: 0 2px 8px rgb(0 0 0 / 0.08);
 }
+.navigation-collapse-toolbar {
+  left: auto;
+  right: 12px;
+}
+.navigation-collapse-toolbar > button {
+  border-radius: 50%;
+}
 @supports (backdrop-filter: blur(12px)) {
-  .navigation-selection-toolbar {
+  .navigation-selection-toolbar,
+  .navigation-collapse-toolbar {
     background: color-mix(in srgb, var(--background) 80%, transparent);
     backdrop-filter: blur(12px);
   }
@@ -814,11 +849,9 @@ kbd {
 .navigation-label {
   flex: 1;
   min-width: 0;
-  overflow-wrap: anywhere;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
   overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 .navigation-link small {
   flex-shrink: 0;
@@ -1167,6 +1200,7 @@ kbd {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .detail-sheet,
   .paper-column-resizer::after,
   .paper-detail-resizer::after,
   .chat-message-actions,
@@ -2194,11 +2228,24 @@ kbd {
   display: block;
 }
 
+.library-topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
 .library-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+}
+.library-tag-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   margin-bottom: 20px;
 }
 .document-organization {
@@ -3096,6 +3143,43 @@ body[data-resizing] * {
   border-left: 1px solid var(--border);
   scrollbar-width: thin;
 }
+/* Details float over the library in a sheet instead of taking list width. */
+.paper-library-body,
+.book-library-body {
+  position: relative;
+}
+.detail-sheet {
+  position: absolute;
+  inset: 8px 8px 8px auto;
+  z-index: 20;
+  width: var(--paper-detail-width, 360px);
+  max-width: calc(100% - 16px);
+  height: auto;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow:
+    0 16px 40px -16px rgb(0 0 0 / 0.28),
+    0 2px 6px rgb(0 0 0 / 0.06);
+}
+.detail-sheet > .paper-detail {
+  flex: 1;
+  width: auto;
+  max-width: none;
+  border-left: 0;
+}
+.detail-sheet > .paper-detail-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  margin: 0;
+}
+/* Leave the top-right corner to the sheet's close button. */
+.detail-sheet .paper-detail-body > :first-child:not(.book-detail-cover) {
+  margin-right: 24px;
+}
 .paper-detail-body {
   display: flex;
   flex-direction: column;
@@ -3182,13 +3266,17 @@ textarea.paper-title-input {
 .paper-chip:focus-within > [data-slot="button"]:last-child {
   opacity: 1;
 }
-.paper-tag-chips .paper-chip {
+:is(.paper-tag-chips, .paper-folder-chips) .paper-chip {
   position: relative;
 }
-.paper-tag-chips .paper-chip > [data-slot="button"]:first-child {
+:is(.paper-tag-chips, .paper-folder-chips)
+  .paper-chip
+  > [data-slot="button"]:first-child {
   padding-inline: 9px;
 }
-.paper-tag-chips .paper-chip > [data-slot="button"]:last-child {
+:is(.paper-tag-chips, .paper-folder-chips)
+  .paper-chip
+  > [data-slot="button"]:last-child {
   position: absolute;
   inset-block-start: -4px;
   inset-inline-end: -4px;
@@ -3199,7 +3287,10 @@ textarea.paper-title-input {
   background: var(--background);
   box-shadow: 0 0 0 1px var(--border);
 }
-.paper-tag-chips .paper-chip > [data-slot="button"]:last-child svg {
+:is(.paper-tag-chips, .paper-folder-chips)
+  .paper-chip
+  > [data-slot="button"]:last-child
+  svg {
   width: 12px;
   height: 12px;
 }

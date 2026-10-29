@@ -13,7 +13,12 @@ vi.mock("pdfjs-dist", () => ({
   GlobalWorkerOptions: {},
   AnnotationMode: { ENABLE: 1 },
   getDocument: () => ({
-    promise: Promise.resolve({ numPages: 10 }),
+    promise: Promise.resolve({
+      numPages: 10,
+      getPage: async () => ({
+        getViewport: () => ({ width: 750, height: 900 }),
+      }),
+    }),
     destroy: vi.fn(),
   }),
 }));

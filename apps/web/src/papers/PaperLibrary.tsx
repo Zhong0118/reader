@@ -135,6 +135,7 @@ import {
 } from "./model";
 import { usePaperUI } from "./state";
 import { PaperDetail } from "./PaperDetail";
+import { DetailSheet, useClickIntent } from "../DetailSheet";
 import { PaperMenuItems, type PaperMenuActions } from "./PaperMenu";
 import { CategoryDialog } from "./CategoryDialog";
 import { CitationDialog } from "./CitationDialog";
@@ -144,8 +145,6 @@ import { copyCitations, exportCitations } from "./CitationMenu";
 import { PAPER_DRAG_TYPE } from "./PaperSidebar";
 import { JournalRankBadges } from "./JournalRankBadges";
 import {
-  clampDetailWidth,
-  detailWidthRange,
   dragHorizontally,
   resizeBoundary,
   columnMinimums,
@@ -167,6 +166,7 @@ export interface PaperLibraryProps {
   jobs: Map<string, Processing>;
   loading: boolean;
   openDocument: (doc: Document) => void;
+  openDocuments?: (docs: Document[]) => void;
   moveToBooks: (doc: Document) => void;
   navOpen: boolean;
   onToggleNav: () => void;
@@ -181,6 +181,7 @@ export function PaperLibrary({
   jobs,
   loading,
   openDocument,
+  openDocuments,
   moveToBooks,
   navOpen,
   onToggleNav,
@@ -366,6 +367,8 @@ export function PaperLibrary({
     if (selectedId && !selected) ui.select(null);
   }, [selectedId, selected, ui]);
   const mainRef = useRef<HTMLElement>(null);
+  const [libraryBody, setLibraryBody] = useState<HTMLDivElement | null>(null);
+  const clickIntent = useClickIntent(selectedId);
   useEffect(() => {
     // Pressing on empty library space closes the detail panel.
     const main = mainRef.current;
@@ -374,7 +377,7 @@ export function PaperLibrary({
       if (
         e.button === 0 &&
         !(e.target as Element).closest(
-          '[data-paper-id], [data-attachment-row], .paper-detail, button, a, input, textarea, select, label, [role="button"], [role="separator"], [role="tab"], [contenteditable="true"]',
+          '[data-paper-id], [data-attachment-row], .detail-sheet, button, a, input, textarea, select, label, [role="button"], [role="separator"], [role="tab"], [contenteditable="true"]',
         )
       )
         ui.select(null);
@@ -385,7 +388,6 @@ export function PaperLibrary({
   // Widths follow the pointer locally and are saved once the drag ends.
   const [draftWidths, setDraftWidths] =
     useState<Partial<Record<TableColumn, number>>>();
-  const [draftDetail, setDraftDetail] = useState<number>();
   const [minimumWidths, setMinimumWidths] = useState<
     Partial<Record<TableColumn, number>>
   >({});
@@ -427,7 +429,6 @@ export function PaperLibrary({
   const fillTableSpace =
     columnWidths.title !== undefined ||
     !columnControls.visible.includes("title");
-  const detailWidth = draftDetail ?? prefs.detailWidth;
   const saveColumnWidths = (next: Partial<Record<TableColumn, number>>) =>
     void savePaperPreferences((p) => ({
       ...p,
@@ -502,28 +503,6 @@ export function PaperLibrary({
   };
   const saveDetailWidth = (width: number) =>
     void savePaperPreferences((p) => ({ ...p, detailWidth: width }));
-  const resizeDetail = (e: ReactPointerEvent<HTMLElement>) => {
-    const start =
-      e.currentTarget.nextElementSibling?.getBoundingClientRect().width ?? 0;
-    let width: number | undefined;
-    dragHorizontally(
-      e,
-      // The panel sits on the right: dragging left widens it.
-      (dx) => setDraftDetail((width = clampDetailWidth(start - dx))),
-      () => {
-        if (width !== undefined) saveDetailWidth(width);
-        setDraftDetail(undefined);
-      },
-    );
-  };
-  const nudgeDetail = (e: ReactKeyboardEvent<HTMLElement>) => {
-    const dx = { ArrowLeft: resizeStep, ArrowRight: -resizeStep }[e.key];
-    if (!dx) return;
-    e.preventDefault();
-    const current =
-      e.currentTarget.nextElementSibling?.getBoundingClientRect().width ?? 0;
-    saveDetailWidth(clampDetailWidth(current + dx));
-  };
   const trashPapers = async (docs: Document[], exitPicking: boolean) => {
     const result = await trashWithUndo(docs.map((d) => d.id));
     const state = usePaperUI.getState();
@@ -680,7 +659,9 @@ export function PaperLibrary({
         onToggleAttachments={() => toggleAttachments(doc.id)}
         doc={doc}
         job={jobs.get(doc.id)}
-        selected={!picking && selectedId === doc.id}
+        selected={
+          !picking && (selectedId === doc.id || clickIntent.pending === doc.id)
+        }
         picking={picking}
         picked={picked.has(doc.id)}
         colors={paperColors(doc, prefs.colorCategories)}
@@ -690,12 +671,26 @@ export function PaperLibrary({
         onActivate={(e) => {
           if (picking || e.metaKey || e.ctrlKey || e.shiftKey)
             ui.togglePick(doc.id, e.shiftKey, visibleIds);
-          else {
+          else if (e.detail > 0) {
+            // A click waits out the double-click window; an open sheet
+            // switches to the paper at once, as a double click opens it anyway.
+            if (selectedId && selectedId !== doc.id) {
+              useAttachments.setState({ selected: null });
+              ui.select(doc.id);
+            } else
+              clickIntent.defer(doc.id, () => {
+                useAttachments.setState({ selected: null });
+                ui.select(selectedId === doc.id ? null : doc.id);
+              });
+          } else {
             useAttachments.setState({ selected: null });
             ui.select(selectedId === doc.id ? null : doc.id);
           }
         }}
-        onOpen={() => openDocument(doc)}
+        onOpen={() => {
+          clickIntent.cancel();
+          openDocument(doc);
+        }}
         onFilterTag={(tag) =>
           ui.setTagFilter({
             match: "all",
@@ -862,16 +857,7 @@ export function PaperLibrary({
           <TrashView documents={trash} />
         </div>
       ) : (
-        <div
-          className="paper-library-body"
-          style={
-            detailWidth
-              ? ({
-                  "--paper-detail-width": `${detailWidth}px`,
-                } as CSSProperties)
-              : undefined
-          }
-        >
+        <div className="paper-library-body" ref={setLibraryBody}>
           <section
             className="paper-list-pane"
             aria-label="论文列表"
@@ -903,6 +889,19 @@ export function PaperLibrary({
                   已选 {picked.size} 篇
                 </span>
                 <div className="ml-auto flex flex-wrap items-center gap-1">
+                  {openDocuments && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={!pickedDocs.length}
+                      onClick={() => {
+                        openDocuments(pickedDocs);
+                        ui.stopPicking();
+                      }}
+                    >
+                      在标签页中打开
+                    </Button>
+                  )}
                   <Button
                     size="sm"
                     variant="ghost"
@@ -1216,21 +1215,16 @@ export function PaperLibrary({
               emptyState
             )}
           </section>
-          {selected && !picking && (
-            <>
-              <div
-                role="separator"
-                aria-orientation="vertical"
-                aria-label="调整论文详情宽度"
-                aria-valuemin={detailWidthRange.min}
-                aria-valuemax={detailWidthRange.max}
-                aria-valuenow={detailWidth}
-                tabIndex={0}
-                className="paper-detail-resizer"
-                onPointerDown={resizeDetail}
-                onKeyDown={nudgeDetail}
-              />
-              {selectedAttachment?.documentId === selected.id ? (
+          <DetailSheet
+            open={!!selected && !picking}
+            onClose={() => ui.select(null)}
+            container={libraryBody}
+            label="论文详情"
+            width={prefs.detailWidth}
+            saveWidth={saveDetailWidth}
+          >
+            {selected &&
+              (selectedAttachment?.documentId === selected.id ? (
                 <AttachmentDetail
                   key={selectedAttachment.id}
                   doc={selected}
@@ -1242,9 +1236,8 @@ export function PaperLibrary({
                   doc={selected}
                   actions={actions}
                 />
-              )}
-            </>
-          )}
+              ))}
+          </DetailSheet>
         </div>
       )}
       {exporting && (
@@ -1266,6 +1259,11 @@ export function PaperLibrary({
         <CategoryDialog
           kind="tag"
           count={tagging.length}
+          suggestions={tags.filter((tag) =>
+            documents.some(
+              (doc) => tagging.includes(doc.id) && !hasTag(doc, tag),
+            ),
+          )}
           onClose={() => setTagging(null)}
           onSave={async (name) => {
             const tag = name.trim().replace(/^#/, "");
@@ -1679,7 +1677,12 @@ function PaperRow({
           dragImage.current = undefined;
         }}
         onClick={(e) => {
-          if ((e.target as Element).closest("[data-row-action]")) return;
+          // The second click of a double click opens instead.
+          if (
+            e.detail > 1 ||
+            (e.target as Element).closest("[data-row-action]")
+          )
+            return;
           onActivate(e);
         }}
         onDoubleClick={(e) => {

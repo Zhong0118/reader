@@ -1,4 +1,4 @@
-// WPS ribbon callbacks. Each button runs one Reader citation command.
+// WPS ribbon callbacks. Each button runs one NeoRead citation command.
 (function (root) {
   "use strict";
 
@@ -27,16 +27,16 @@
     root.alert(message);
   }
 
-  root.OnAddinLoad = function (ribbonUI) {
+  root.NeoReadCiteOnAddinLoad = function (ribbonUI) {
     root.wps.ribbonUI = ribbonUI;
     return true;
   };
 
-  root.GetImage = function (control) {
+  root.NeoReadCiteGetImage = function (control) {
     return images[control.Id] || "";
   };
 
-  root.OnAction = function (control) {
+  root.NeoReadCiteOnAction = function (control) {
     const command = control.Id;
     if (!commands.includes(command) || running) return true;
     const app = root.wps.WpsApplication();
@@ -44,11 +44,11 @@
       alertUser("请先打开一份文档。");
       return true;
     }
-    const doc = root.ReaderCiteWord.createDocument(app);
+    const doc = root.NeoReadCiteWord.createDocument(app);
     running = true;
-    root.ReaderCiteProtocol.bootstrap(root.location.pathname)
+    root.NeoReadCiteProtocol.bootstrap(root.location.pathname)
       .then((post) =>
-        root.ReaderCiteProtocol.runCommand({
+        root.NeoReadCiteProtocol.runCommand({
           command,
           documentId: doc.id(),
           client: "wps",

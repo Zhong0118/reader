@@ -5,7 +5,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { ArrowLeftRight } from "lucide-react";
+import { ArrowLeftRight, ArrowUpDown, Columns2, Rows2 } from "lucide-react";
 import { Button } from "@neoread/ui/components/button";
 import {
   ResizableHandle,
@@ -13,6 +13,8 @@ import {
   ResizablePanelGroup,
   usePanelRef,
 } from "@neoread/ui/components/resizable";
+import { useReaderStore } from "../store";
+import { readerLayout, updateReaderLayout } from "../neoread-layout";
 
 export function TranslationPanes({
   mode,
@@ -37,7 +39,10 @@ export function TranslationPanes({
   const sourcePanel = usePanelRef();
   const rememberedWidth = useRef(sourceWidth);
   rememberedWidth.current = sourceWidth;
-  const [dividerLeft, setDividerLeft] = useState(50);
+  const [dividerAt, setDividerAt] = useState(50);
+  const stacked = useReaderStore(
+    (state) => readerLayout(state.theme.readerLayout).stacked,
+  );
   const parallel = mode === "parallel";
   const sourceId = `${id}-${swapped ? "right" : "left"}`;
 
@@ -45,10 +50,10 @@ export function TranslationPanes({
     sourcePanel.current?.resize(
       `${mode === "source" ? 100 : mode === "translation" ? 0 : rememberedWidth.current}%`,
     );
-  }, [mode, swapped, sourcePanel]);
+  }, [mode, swapped, stacked, sourcePanel]);
 
-  // Stable React keys preserve the PDF instance when the panels change sides.
-  // Positional panel IDs also refresh the resize library's left/right ordering.
+  // Keep DOM order stable: reinserting a panel resets descendant scroll positions.
+  // CSS order swaps sides; positional IDs refresh the resize library's ordering.
   const panels = [
     <ResizablePanel
       key="source"
@@ -67,7 +72,7 @@ export function TranslationPanes({
       className="translation-divider"
       disabled={!parallel}
       hidden={!parallel}
-      aria-label="调整原文和译文宽度"
+      aria-label={stacked ? "调整原文和译文高度" : "调整原文和译文宽度"}
     />,
     <ResizablePanel
       key="translation"
@@ -83,9 +88,14 @@ export function TranslationPanes({
   ];
 
   return (
-    <div className="translation-panes" data-mode={mode}>
+    <div
+      className="translation-panes"
+      data-mode={mode}
+      data-stacked={stacked || undefined}
+      data-swapped={swapped || undefined}
+    >
       <ResizablePanelGroup
-        orientation="horizontal"
+        orientation={stacked ? "vertical" : "horizontal"}
         disabled={!parallel}
         onPointerDownCapture={(event) => {
           if (
@@ -100,7 +110,7 @@ export function TranslationPanes({
             onResizeStart?.();
         }}
         onLayoutChange={(layout) => {
-          if (parallel) setDividerLeft(layout[`${id}-left`]);
+          if (parallel) setDividerAt(layout[`${id}-left`]);
         }}
         onLayoutChanged={(layout, { isUserInteraction }) => {
           if (parallel && isUserInteraction) {
@@ -109,22 +119,34 @@ export function TranslationPanes({
           }
         }}
       >
-        {swapped ? panels.reverse() : panels}
+        {panels}
       </ResizablePanelGroup>
       {/* Overlay the divider outside the group so its capture-phase drag handler
-          does not consume pointer events intended for this button. */}
+          does not consume pointer events intended for these buttons. */}
       {parallel && (
-        <Button
-          className="translation-swap"
-          style={{ left: `${dividerLeft}%` }}
-          variant="outline"
-          size="icon-xs"
-          aria-label="交换原文和译文"
-          title="交换原文和译文"
-          onClick={onSwap}
+        <div
+          className="translation-pane-controls"
+          style={stacked ? { top: `${dividerAt}%` } : { left: `${dividerAt}%` }}
         >
-          <ArrowLeftRight />
-        </Button>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label="交换原文和译文"
+            title="交换原文和译文"
+            onClick={onSwap}
+          >
+            {stacked ? <ArrowUpDown /> : <ArrowLeftRight />}
+          </Button>
+          <Button
+            variant="outline"
+            size="icon-xs"
+            aria-label={stacked ? "左右排列" : "上下排列"}
+            title={stacked ? "左右排列" : "上下排列"}
+            onClick={() => updateReaderLayout({ stacked: !stacked })}
+          >
+            {stacked ? <Columns2 /> : <Rows2 />}
+          </Button>
+        </div>
       )}
     </div>
   );

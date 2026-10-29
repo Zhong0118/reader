@@ -47,10 +47,9 @@ const documents = [
     title: "A book",
   }),
 ];
-it("combines category, format, reading, favorite, search and all selected tags", () => {
+it("combines format, reading, favorite, search and all selected tags", () => {
   const filters = {
     ...initialFilters,
-    category: "paper",
     format: "pdf",
     reading: "reading",
     tags: ["web", "安全"],

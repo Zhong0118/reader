@@ -85,7 +85,7 @@ func (s *Server) renderDocumentPages(ctx context.Context, c *documentCorpus, pag
 			return nil, err
 		}
 		defer os.RemoveAll(work)
-		child, cancel := context.WithTimeout(ctx, 60*time.Second)
+		child, cancel := context.WithTimeout(ctx, 3*time.Minute)
 		defer cancel()
 		cmd := exec.CommandContext(child, node, filepath.Join(filepath.Dir(processor), "render-pages.mjs"), "--input", s.Store.File(d), "--output", work, "--pages", strings.Join(missing, ","))
 		cmd.Dir, cmd.Env, cmd.Stderr = work, append(os.Environ(), "ELECTRON_RUN_AS_NODE=1"), io.Discard

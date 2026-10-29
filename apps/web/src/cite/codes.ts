@@ -1,18 +1,18 @@
 import type { NoteType } from "./protocol";
 
 /**
- * Reader's own field codes. The JSON follows the CSL citation schema so every
+ * NeoRead's own field codes. The JSON follows the CSL citation schema so every
  * citation carries its full item data and can be formatted without the
  * library; the prefixes deliberately differ from Zotero's.
  */
-export const CITATION_PREFIX = "READER_CITATION";
-export const BIBLIOGRAPHY_PREFIX = "READER_BIBLIOGRAPHY";
-export const TEMP_CODE = "READER_TEMP";
+export const CITATION_PREFIX = "NEOREAD_CITATION";
+export const BIBLIOGRAPHY_PREFIX = "NEOREAD_BIBLIOGRAPHY";
+export const TEMP_CODE = "NEOREAD_TEMP";
 const SCHEMA =
   "https://github.com/citation-style-language/schema/raw/master/csl-citation.json";
 
 export type CitationItem = {
-  /** Reader document ID. */
+  /** NeoRead document ID. */
   id: string;
   uris: string[];
   itemData: Record<string, unknown>;
@@ -28,7 +28,7 @@ export type Citation = {
   properties: {
     plainCitation?: string;
     noteIndex: number;
-    /** The user kept a manual edit; Reader stops updating this text. */
+    /** The user kept a manual edit; NeoRead stops updating this text. */
     dontUpdate?: boolean;
     /** Keep the chosen order even when the style sorts citations. */
     unsorted?: boolean;
@@ -61,7 +61,7 @@ export type ParsedField =
   | { kind: "temp" }
   | { kind: "corrupt"; code: string };
 
-export const paperURI = (id: string) => `reader://paper/${id}`;
+export const paperURI = (id: string) => `neoread://paper/${id}`;
 
 function json(code: string, prefix: string) {
   const start = code.indexOf("{", prefix.length);
@@ -117,7 +117,8 @@ const strings = (value: unknown) =>
     : [];
 
 export function parseField(code: string): ParsedField {
-  const trimmed = code.trim();
+  // Normalize only for parsing; callers retain the original code for conflicts.
+  const trimmed = code.trim().replace(/^READER_/, "NEOREAD_");
   try {
     if (trimmed.startsWith(CITATION_PREFIX))
       return {
@@ -145,7 +146,11 @@ export function parseField(code: string): ParsedField {
 }
 
 export function citationCode(citation: Citation) {
-  return `${CITATION_PREFIX} ${JSON.stringify({ ...citation, schema: SCHEMA })}`;
+  const citationItems = citation.citationItems.map((item) => ({
+    ...item,
+    uris: item.uris.map((uri) => uri.replace(/^reader:\/\//, "neoread://")),
+  }));
+  return `${CITATION_PREFIX} ${JSON.stringify({ ...citation, citationItems, schema: SCHEMA })}`;
 }
 
 export function bibliographyCode(data: BibliographyData) {

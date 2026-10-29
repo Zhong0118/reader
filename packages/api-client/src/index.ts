@@ -1,3 +1,4 @@
+import { consumeAnnotationStream } from "./annotation-stream";
 import { diagnosticFetch, reportDiagnostic } from "./diagnostics";
 import {
   uploadAttachment,
@@ -320,13 +321,37 @@ export const api = {
       body: JSON.stringify({ text: selection.text, ...selection.context }),
       signal,
     }),
+  annotationStream: async (
+    id: string,
+    signal: AbortSignal,
+    onRevision: (revision: string) => void,
+  ) => {
+    const response = await diagnosticFetch(
+      `/api/documents/${encodeURIComponent(id)}/annotations/stream`,
+      {
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+          Accept: "text/event-stream",
+        },
+        signal,
+      },
+    );
+    if (
+      !response.ok ||
+      !response.body ||
+      !response.headers.get("content-type")?.startsWith("text/event-stream")
+    )
+      throw new Error(`无法订阅批注 (${response.status})`);
+    return consumeAnnotationStream(response.body, signal, onRevision);
+  },
   translationStream: async (
     id: string,
     signal: AbortSignal,
     onEvent: (event: TranslationEvent) => void,
+    hrefs?: string[],
   ) => {
     const response = await diagnosticFetch(
-      `/api/documents/${encodeURIComponent(id)}/translations/stream`,
+      `/api/documents/${encodeURIComponent(id)}/translations/stream${hrefs?.length ? `?${new URLSearchParams(hrefs.map((href) => ["href", href]))}` : ""}`,
       {
         headers: {
           Authorization: `Bearer ${sessionToken}`,
@@ -346,11 +371,14 @@ export const api = {
   },
   epubChapters: (id: string, signal?: AbortSignal) =>
     request<import("@neoread/core").EPUBChapters>(
-      `/api/documents/${encodeURIComponent(id)}/epub-chapters`,
+      `/api/documents/${encodeURIComponent(id)}/epub-chapters?summary=1`,
       { signal },
     ),
   epubChapter: (id: string, href: string, signal?: AbortSignal) =>
-    request<{ html: string }>(
+    request<{
+      html: string;
+      blocks?: import("@neoread/core").EPUBReadingBlock[];
+    }>(
       `/api/documents/${encodeURIComponent(id)}/epub-chapter?href=${encodeURIComponent(href)}`,
       { signal },
     ),
@@ -448,6 +476,13 @@ export const api = {
       method: "DELETE",
     }),
   processing: () => request<Processing[]>("/api/processing"),
+  reparseDocument: (id: string) =>
+    request<{ reparsed: boolean }>(
+      `/api/documents/${encodeURIComponent(id)}/reparse`,
+      {
+        method: "POST",
+      },
+    ),
   process: (id: string) =>
     request<Processing>(`/api/documents/${id}/processing`, { method: "POST" }),
   blocks: (id: string) => request<PDFBlock[]>(`/api/documents/${id}/blocks`),
@@ -585,13 +620,18 @@ export const api = {
       headers: { "Content-Type": "image/jpeg" },
       body: image,
     }),
+  migrateLegacyAnnotations: () =>
+    request<{ migrated: number; skipped: number; failed: number }>(
+      "/api/annotations/migrate-legacy",
+      { method: "POST" },
+    ),
   recoverAnnotations: (id: string, force = false) =>
     request<{ checked: boolean }>(`/api/documents/${id}/annotations/recover`, {
       method: "POST",
       body: JSON.stringify({ force }),
     }),
-  annotations: (id: string) =>
-    request<Annotation[]>(`/api/documents/${id}/annotations`),
+  annotations: (id: string, signal?: AbortSignal) =>
+    request<Annotation[]>(`/api/documents/${id}/annotations`, { signal }),
   annotate: (
     id: string,
     annotation: Pick<

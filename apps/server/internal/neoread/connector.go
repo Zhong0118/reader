@@ -125,7 +125,7 @@ func (s *Server) ConnectorHandler() http.Handler {
 		} else if strings.HasPrefix(r.URL.Path, "/v1/cite/") {
 			// Word macros send no Origin; the plugins read a separate credential.
 			if !s.citeAuthorized(r) {
-				fail(w, 401, "本机访问凭据已失效，请重启 Reader")
+				fail(w, 401, "本机访问凭据已失效，请重启 NeoRead")
 				return
 			}
 		} else if r.URL.Path != "/v1/session" && r.URL.Path != "/v1/status" {

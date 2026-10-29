@@ -18,7 +18,7 @@ import (
 
 const translationBatchCharacters = 10000
 const translationBatchConcurrency = 3
-const translationBatchTimeout = 20 * time.Minute
+const translationBatchTimeout = time.Hour
 
 type translationParagraph struct {
 	BlockID    string `json:"blockId"`
@@ -257,7 +257,7 @@ func (s *Server) translationAttempt(ctx context.Context, doc Document, m transla
 			replacements = append(replacements, t)
 			return nil
 		}
-		if err := s.saveTranslation(doc.ID, t); err != nil {
+		if err := s.saveTranslation(doc.ID, t, m); err != nil {
 			return err
 		}
 		progress()
@@ -295,7 +295,7 @@ func (s *Server) translationAttempt(ctx context.Context, doc Document, m transla
 				a.err = err
 				break
 			}
-			if err := s.saveTranslation(doc.ID, item); err != nil {
+			if err := s.saveTranslation(doc.ID, item, m); err != nil {
 				return nil, err
 			}
 			a.decoder.completed[item.BlockID] = true
@@ -355,7 +355,7 @@ func (s *Server) translateBatch(ctx context.Context, doc Document, m translation
 			t.Status = "pending"
 			t.Error = ""
 		}
-		if err := s.saveTranslation(doc.ID, t); err != nil {
+		if err := s.saveTranslation(doc.ID, t, m); err != nil {
 			return err
 		}
 		if t.Status == "failed" {

@@ -31,6 +31,13 @@ if (
     root.render(<LibraryRecoverySettings />),
   );
 } else if (
+  window.neoreadDesktop &&
+  new URLSearchParams(location.search).has("citationWindow")
+) {
+  void import("./cite/CitationWindow").then(({ CitationWindow }) =>
+    root.render(<CitationWindow />),
+  );
+} else if (
   import.meta.env.DEV &&
   location.pathname === "/__streaming-benchmark"
 ) {

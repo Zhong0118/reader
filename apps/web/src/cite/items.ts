@@ -17,7 +17,7 @@ const normalizedDOI = (value: unknown) =>
   typeof value === "string" ? value.trim().toLowerCase() : "";
 
 /**
- * Resolves cited papers against the library: by Reader ID, then by DOI for a
+ * Resolves cited papers against the library: by NeoRead ID, then by DOI for a
  * paper that was re-imported. Papers not found keep their embedded data.
  */
 export function librarySource(documents: Document[]): ItemSource {

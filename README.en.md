@@ -127,7 +127,7 @@ Original files are stored on the filesystem. Document metadata, progress, annota
 | Unpackaged desktop (`pnpm desktop`) | `~/Library/Application Support/NeoRead Dev/library/` on macOS                                     |
 | Browser development (`pnpm dev`)    | `.neoread/` in the project root                                                                   |
 
-Legacy Reader libraries usually live at `~/Library/Application Support/Reader/library/` on macOS. See the [migration design](docs/neoread-migration.md) (Chinese); the safe migration flow still needs implementation and upgrade validation.
+Legacy Reader libraries usually live at `~/Library/Application Support/Reader/library/` on macOS. On its first launch, the installed NeoRead app copies and verifies the legacy library and related settings once, then offers an option to clean up the migrated legacy business data. Development runs do not read legacy Reader data. See the [migration guide](docs/neoread-migration.md) (Chinese) for scope, recovery, and cleanup rules.
 
 ```text
 library/

@@ -500,6 +500,79 @@
                 },
             },
         },
+      "/api/annotations/migrate-legacy":
+        {
+          "post":
+            {
+              "summary": "Manually migrate legacy annotations; opening documents never triggers migration",
+              "responses":
+                {
+                  "200":
+                    {
+                      "description": "Migration result; unmatched annotations are preserved",
+                      "content":
+                        {
+                          "application/json":
+                            {
+                              "schema":
+                                {
+                                  "type": "object",
+                                  "required": ["migrated", "skipped", "failed"],
+                                  "properties":
+                                    {
+                                      "migrated":
+                                        {
+                                          "type": "integer",
+                                          "description": "Original annotations migrated",
+                                        },
+                                      "skipped":
+                                        {
+                                          "type": "integer",
+                                          "description": "Legacy annotations left unchanged",
+                                        },
+                                      "failed":
+                                        {
+                                          "type": "integer",
+                                          "description": "Documents that failed to migrate",
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                  "500": { "description": "Unable to read legacy annotations" },
+                },
+            },
+        },
+      "/api/documents/{id}/annotations/stream":
+        {
+          "get":
+            {
+              "summary": "Subscribe to committed annotation recovery/migration revisions, independently of chapter subscriptions",
+              "parameters":
+                [
+                  {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": { "type": "string" },
+                  },
+                ],
+              "responses":
+                {
+                  "200":
+                    {
+                      "description": "SSE revision events with a JSON string token, initially and after committed changes. The client reloads saved annotations only when the token changes, including reconnects. No source parsing or recovery is triggered.",
+                      "content":
+                        {
+                          "text/event-stream":
+                            { "schema": { "type": "string" } },
+                        },
+                    },
+                  "404": { "description": "Document not found" },
+                },
+            },
+        },
       "/api/documents/{id}/annotations/recover":
         {
           "post":
@@ -2908,6 +2981,54 @@
                 },
             },
         },
+      "/api/documents/{id}/reparse":
+        {
+          "post":
+            {
+              "description": "Rebuild the EPUB publication cache or PDF layout from the stored original while keeping document identity and user data.",
+              "parameters":
+                [
+                  {
+                    "name": "id",
+                    "in": "path",
+                    "required": true,
+                    "schema": { "type": "string" },
+                  },
+                ],
+              "responses":
+                {
+                  "200":
+                    {
+                      "description": "Reparsed",
+                      "content":
+                        {
+                          "application/json":
+                            {
+                              "schema":
+                                {
+                                  "type": "object",
+                                  "required": ["reparsed"],
+                                  "properties":
+                                    { "reparsed": { "type": "boolean" } },
+                                },
+                            },
+                        },
+                    },
+                  "default":
+                    {
+                      "description": "Error",
+                      "content":
+                        {
+                          "application/json":
+                            {
+                              "schema":
+                                { "$ref": "#/components/schemas/Error" },
+                            },
+                        },
+                    },
+                },
+            },
+        },
       "/api/documents/{id}/blocks":
         {
           "get":
@@ -2965,6 +3086,12 @@
                     "name": "id",
                     "required": true,
                     "schema": { "type": "string" },
+                  },
+                  {
+                    "in": "query",
+                    "name": "summary",
+                    "schema": { "type": "string", "enum": ["1"] },
+                    "description": "Return spine metadata with empty blocks and estimated character counts, without reading chapter bodies.",
                   },
                 ],
               "responses":
@@ -3030,6 +3157,14 @@
                                   "required": ["html"],
                                   "properties":
                                     {
+                                      "blocks":
+                                        {
+                                          "type": "array",
+                                          "items":
+                                            {
+                                              "$ref": "#/components/schemas/EPUBReadingBlock",
+                                            },
+                                        },
                                       "html":
                                         {
                                           "type": "string",
@@ -3727,6 +3862,15 @@
                     "in": "path",
                     "required": true,
                     "schema": { "type": "string" },
+                  },
+                  {
+                    "in": "query",
+                    "name": "href",
+                    "style": "form",
+                    "explode": true,
+                    "schema":
+                      { "type": "array", "items": { "type": "string" } },
+                    "description": "EPUB chapter hrefs. When provided, only these chapters are parsed and their translations subscribed to.",
                   },
                 ],
               "responses":
@@ -6213,7 +6357,7 @@
                   "webSources":
                     {
                       "type": "array",
-                      "maxItems": 24,
+                      "maxItems": 1000,
                       "items": { "$ref": "#/components/schemas/WebSource" },
                     },
                 },
@@ -6473,6 +6617,24 @@
                   "startedAt": { "type": "string" },
                   "completedAt": { "type": "string" },
                   "usageTracked": { "type": "boolean" },
+                  "bookLayout":
+                    {
+                      "type": "object",
+                      "readOnly": true,
+                      "description": "Background layout parsing of a book PDF, independent of translation. A finished job stays as complete with its final page count.",
+                      "required": ["status", "pagesDone", "pagesTotal"],
+                      "properties":
+                        {
+                          "status":
+                            {
+                              "type": "string",
+                              "enum":
+                                ["queued", "running", "failed", "complete"],
+                            },
+                          "pagesDone": { "type": "integer" },
+                          "pagesTotal": { "type": "integer" },
+                        },
+                    },
                 },
               "required":
                 [
@@ -7171,6 +7333,7 @@
                   "start": { "type": "integer", "minimum": 0 },
                   "end": { "type": "integer", "minimum": 0 },
                   "endBlockId": { "type": "string" },
+                  "endHref": { "type": "string" },
                   "locator": { "type": "string" },
                   "progression": { "type": "number" },
                   "quote": { "type": "string" },

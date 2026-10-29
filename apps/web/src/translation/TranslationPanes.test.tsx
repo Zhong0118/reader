@@ -55,14 +55,19 @@ function width(element: HTMLElement): number {
   if (element.hasAttribute("data-separator")) return element.hidden ? 0 : 1;
   return 1001;
 }
+function visualChildren(element: Element): HTMLElement[] {
+  const children = [...element.children] as HTMLElement[];
+  // Mirror translation.css: only the group's direct children change order.
+  return element.hasAttribute("data-group") &&
+    element.parentElement?.hasAttribute("data-swapped")
+    ? children.reverse()
+    : children;
+}
 function left(element: HTMLElement): number {
   let offset = 0;
-  for (
-    let sibling = element.previousElementSibling;
-    sibling;
-    sibling = sibling.previousElementSibling
-  ) {
-    offset += width(sibling as HTMLElement);
+  for (const sibling of visualChildren(element.parentElement!)) {
+    if (sibling === element) break;
+    offset += width(sibling);
   }
   return offset;
 }
@@ -94,8 +99,14 @@ beforeEach(async () => {
   );
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(
     function (this: HTMLElement) {
-      if (this.classList.contains("translation-swap"))
-        return new DOMRect(parseFloat(this.style.left) * 10 - 12, 12, 24, 24);
+      const controls = this.closest<HTMLElement>(".translation-pane-controls");
+      if (controls)
+        return new DOMRect(
+          parseFloat(controls.style.left) * 10 - 12,
+          12,
+          24,
+          24,
+        );
       return new DOMRect(
         this.hasAttribute("data-group") ? 0 : left(this),
         0,
@@ -170,7 +181,9 @@ it("resizes by pointer in both orders and retains the PDF instance and chosen wi
   await click("交换原文和译文");
   expect(sourceSize()).toBeCloseTo(60);
   const group = host.querySelector("[data-group]")!;
-  expect(group.lastElementChild!.querySelector("[data-source]")).not.toBeNull();
+  expect(
+    visualChildren(group).at(-1)!.querySelector("[data-source]"),
+  ).not.toBeNull();
   await drag(100);
   expect(sourceSize()).toBeCloseTo(50);
   await drag(-150);
@@ -201,7 +214,7 @@ it("supports keyboard resizing and keeps clicks on the swap button out of the dr
   const button = host.querySelector<HTMLButtonElement>(
     '[aria-label="交换原文和译文"]',
   )!;
-  const x = parseFloat(button.style.left) * 10;
+  const x = parseFloat(button.parentElement!.style.left) * 10;
   await act(async () => {
     button.dispatchEvent(
       new MouseEvent("pointerdown", {
@@ -251,8 +264,77 @@ it("restores the last source width and order after leaving a document, without s
   await click("parallel");
   expect(sourceSize()).toBeCloseTo(60);
   expect(
-    host
-      .querySelector("[data-group]")!
-      .lastElementChild!.querySelector("[data-source]"),
+    visualChildren(host.querySelector("[data-group]")!)
+      .at(-1)!.querySelector("[data-source]"),
   ).not.toBeNull();
+});
+
+it("stacks source and translation top and bottom without remounting the source", async () => {
+  await click("parallel");
+  expect(mount).toHaveBeenCalledTimes(1);
+  const divider = () => host.querySelector<HTMLElement>('[role="separator"]')!;
+  expect(divider().getAttribute("aria-orientation")).toBe("vertical");
+  await click("上下排列");
+  expect(
+    readerLayout(useReaderStore.getState().theme.readerLayout).stacked,
+  ).toBe(true);
+  expect(
+    host.querySelector(".translation-panes")!.hasAttribute("data-stacked"),
+  ).toBe(true);
+  expect(divider().getAttribute("aria-orientation")).toBe("horizontal");
+  expect(divider().getAttribute("aria-label")).toBe("调整原文和译文高度");
+  const controls = host.querySelector<HTMLElement>(
+    ".translation-pane-controls",
+  )!;
+  expect(controls.style.top).not.toBe("");
+  expect(controls.style.left).toBe("");
+  await click("交换原文和译文");
+  await click("左右排列");
+  expect(
+    readerLayout(useReaderStore.getState().theme.readerLayout),
+  ).toMatchObject({ stacked: false, swapped: true });
+  expect(divider().getAttribute("aria-orientation")).toBe("vertical");
+  expect(mount).toHaveBeenCalledTimes(1);
+  expect(unmount).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "swaps panes without moving scroll containers in the DOM (stacked=%s)",
+  async (stacked) => {
+    await click("parallel");
+    if (stacked) await click("上下排列");
+    const group = host.querySelector("[data-group]")!;
+    const source = host.querySelector<HTMLElement>("[data-source]")!;
+    const translation = group.lastElementChild!.firstElementChild as HTMLElement;
+    source.scrollTop = 7245;
+    source.scrollLeft = 35;
+    translation.scrollTop = 1234;
+    const children = [...group.children];
+    // jsdom does not reset scroll on DOM reinsertion as browsers do. Assert
+    // that swapping never removes/reinserts the panels containing either view.
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((records) => mutations.push(...records));
+    observer.observe(group, { childList: true });
+    try {
+      for (const swapped of [true, false, true]) {
+        await click("交换原文和译文");
+        expect([...mutations, ...observer.takeRecords()]).toEqual([]);
+        expect([...group.children]).toEqual(children);
+        expect(
+          visualChildren(group).at(swapped ? -1 : 0)!.contains(source),
+        ).toBe(true);
+        expect(source.scrollTop).toBe(7245);
+        expect(source.scrollLeft).toBe(35);
+        expect(translation.scrollTop).toBe(1234);
+      }
+    } finally {
+      observer.disconnect();
+    }
+  },
+);
+
+it("hides the layout controls outside parallel mode", async () => {
+  expect(host.querySelector('[aria-label="上下排列"]')).toBeNull();
+  await click("translation");
+  expect(host.querySelector('[aria-label="上下排列"]')).toBeNull();
 });

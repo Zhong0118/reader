@@ -41,12 +41,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           SOURCE_SHA: ${{ steps.source.outputs.sha }}
-        run: |
-          verified=$(gh api --method GET "repos/$GH_REPO/actions/workflows/ci.yml/runs" \
-            -f head_sha="$SOURCE_SHA" -f event=push -f status=success -f per_page=100 \
-            --jq '.workflow_runs | any(.head_sha == env.SOURCE_SHA and .conclusion == "success" and .event == "push" and .head_repository.full_name == env.GH_REPO)')
-          echo "verified=$verified" >> "$GITHUB_OUTPUT"
-          echo "Reuse successful CI for $SOURCE_SHA: $verified" >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/release-ci.mjs
 
   checks:
     needs: prepare

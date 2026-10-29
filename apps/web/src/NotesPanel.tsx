@@ -1,5 +1,6 @@
 import { AnnotationQuote } from "./AnnotationQuote";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { registerTabCloseGuard } from "./document-tab-guards";
 import {
   Check,
   ChevronDown,
@@ -110,6 +111,19 @@ function NoteCard({
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(a.note);
   const [saving, setSaving] = useState(false);
+  const closeState = useRef({ editing, saving, changed: false });
+  closeState.current = { editing, saving, changed: draft !== a.note };
+  useEffect(
+    () =>
+      registerTabCloseGuard(a.documentId, () =>
+        closeState.current.saving
+          ? { blocked: true, message: "批注正在保存，请保存完成后再关闭。" }
+          : closeState.current.editing && closeState.current.changed
+            ? { message: "正在编辑的批注尚未保存，关闭后会丢失。" }
+            : null,
+      ),
+    [a.documentId],
+  );
   const question = a.kind === "question";
   return (
     <article className="note-card" data-kind={a.kind}>
@@ -253,7 +267,6 @@ export function NotesPanel({
   onResolve,
   onShowAnswer,
   onExport,
-  onRecover,
 }: {
   document: Document;
   annotations: Annotation[];
@@ -270,9 +283,7 @@ export function NotesPanel({
   onResolve: (annotation: Annotation, resolved: boolean) => void;
   onShowAnswer: (id: string) => void;
   onExport: () => void;
-  onRecover?: () => Promise<void>;
 }) {
-  const [recovering, setRecovering] = useState(false);
   const [filter, setFilter] = useState<NotesFilter>("all");
   const [openOnly, setOpenOnly] = useState(false);
   const [color, setColor] = useState("");
@@ -411,19 +422,7 @@ export function NotesPanel({
       </ScrollArea>
       <div className="notes-footer">
         <span>{annotations.length} 条记录</span>
-        {onRecover && (
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={recovering}
-            onClick={() => {
-              setRecovering(true);
-              void onRecover().finally(() => setRecovering(false));
-            }}
-          >
-            {recovering ? "检查中…" : "重新定位"}
-          </Button>
-        )}
+
         <Button size="sm" variant="ghost" onClick={onExport}>
           <Download />
           导出

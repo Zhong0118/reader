@@ -50,7 +50,6 @@ export function TagBoards({
   processingError,
   openDocument,
   favorite,
-  onEdit,
   onSettings,
   onOverview,
   onUsage,
@@ -63,7 +62,6 @@ export function TagBoards({
   processingError: string;
   openDocument: (doc: Document) => void;
   favorite: (doc: Document) => void;
-  onEdit: (id: string) => void;
   onSettings: () => void;
   onOverview: (doc: Document) => void;
   onUsage: (doc: Document) => void;
@@ -459,7 +457,6 @@ export function TagBoards({
             processingError={processingError}
             openDocument={openDocument}
             favorite={favorite}
-            onEdit={onEdit}
             onSettings={onSettings}
             onOverview={onOverview}
             onUsage={onUsage}

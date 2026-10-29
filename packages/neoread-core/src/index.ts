@@ -1,4 +1,5 @@
 export { zoomCommand } from "./zoom-shortcut";
+export { documentTabCommand } from "./document-tab-shortcut";
 export {
   NEOREAD_SCHEME,
   LINK_SCHEMES,
@@ -68,6 +69,8 @@ export type EPUBLocation = {
   start?: number;
   end?: number;
   endBlockId?: string;
+  /** Chapter containing the end of a cross-chapter selection. */
+  endHref?: string;
   type: "epub";
   href: string;
   sentenceLink?: SentenceLink;
@@ -354,8 +357,14 @@ export interface ReaderLayout {
   /** Source width in parallel mode, independent of its left/right position. */
   sourceWidth: number;
   swapped: boolean;
+  /** Parallel mode stacks source and translation top and bottom. */
+  stacked: boolean;
 }
 export interface ReaderTheme {
+  /** Ordered open documents and the selected document; null selects the library. */
+  readingSession?: { documentIds: string[]; activeId: string | null };
+  /** Open documents in tabs; otherwise opening one replaces the current document. */
+  documentTabs?: boolean;
   readerLayout?: Partial<ReaderLayout>;
   /** Opt in to copying text selections and selected annotations. */
   autoCopySelection?: boolean;
@@ -402,6 +411,7 @@ export interface HighlightColor {
   label: string;
 }
 export const defaultTheme: ReaderTheme = {
+  documentTabs: false,
   autoCopySelection: false,
   autoTranslatePDF: true,
   pdfDarkImageMode: "adaptive",
@@ -459,6 +469,14 @@ export interface ReaderEvents {
   internalLink?: (origin: DocumentLocation) => void;
   epubInteraction?: () => void;
   epubReadingAnchor?: (blockId: string) => void;
+  /** Only paragraphs retained by the EPUB reader window. */
+  epubBlocksChanged?: (blocks: EPUBReadingBlock[]) => void;
+  /** Pointer over an EPUB paragraph, or null when it leaves. */
+  epubBlockHover?: (blockId: string | null) => void;
+  /** A click on an EPUB paragraph; the default centers it in the source. */
+  epubBlockFocus?: (blockId: string) => void;
+  /** The copy, ask-AI or preview button on a hovered EPUB paragraph. */
+  epubBlockAction?: (block: EPUBReadingBlock, action: PDFBlockAction) => void;
   blockHover?: (block: PDFBlock | null) => void;
   annotation?: (target: ReaderAnnotationTarget | null) => void;
   /** Hover preview only; never select or copy annotation text. */
@@ -495,6 +513,7 @@ export interface ReaderAdapter {
   setBlocks?(blocks: PDFBlock[]): void;
   setSearchBlocks?(blockIds: string[]): void;
   setEPUBBlocks?(blocks: EPUBReadingBlock[]): void;
+  getEPUBChapters?(): EPUBChapter[];
   focusEPUBLocations?(locations: EPUBLocation[]): Promise<void>;
   hoverBlock?(blockId: string | null): void;
   /** Re-renders a PDF block from vectors; `width` targets device pixels. */
@@ -640,6 +659,12 @@ export interface Processing {
   detail: string;
   warning?: string;
   updatedAt: string;
+  /** Background layout parsing of a book PDF; stays `complete` when done. */
+  bookLayout?: {
+    status: "queued" | "running" | "failed" | "complete";
+    pagesDone: number;
+    pagesTotal: number;
+  };
 }
 export interface PDFBlock {
   id: string;

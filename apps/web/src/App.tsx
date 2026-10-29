@@ -14,7 +14,7 @@ import {
   Command,
   X,
   Tags,
-  Pencil,
+  CheckSquare,
   Check,
   CirclePlus,
   Info,
@@ -51,6 +51,7 @@ import {
   refreshTrash,
   openLinkTarget,
   openLibraryDocument,
+  documentTabsShown,
 } from "./store";
 import { TrashView } from "./TrashView";
 import { PaperLibrary } from "./papers/PaperLibrary";
@@ -59,14 +60,16 @@ import { usePaperUI } from "./papers/state";
 import { ImportPaperDialog } from "./papers/ImportPaperDialog";
 import { LibraryModeSwitcher, libraryModes } from "./LibraryModeSwitcher";
 import { Settings } from "./Settings";
-import { Workspace } from "./Workspace";
+import { DocumentTabs, ReadingWorkspaces } from "./DocumentTabs";
+import { flushProgress } from "./progress";
 import { useProcessing } from "./ProcessingStatus";
 import { useUpdateProgress } from "./update-progress";
 import { useResolvedTheme } from "./appearance";
-import { DocumentEditor, LibraryFilterBar } from "./DocumentManagement";
+import { LibraryFilterBar, LibraryTagFilters } from "./DocumentManagement";
 import { TagBoards } from "./TagBoards";
 import { LibraryDocuments } from "./LibraryDocuments";
-import { ResizableBookDetail } from "./BookDetail";
+import { BookDetail, saveBookDetailWidth } from "./BookDetail";
+import { DetailSheet } from "./DetailSheet";
 import type { BookMenuActions } from "./BookMenu";
 import { DocumentOverviewDialog } from "./DocumentOverview";
 import { ProcessingUsageDialog } from "./ProcessingUsage";
@@ -78,12 +81,14 @@ const currentMode = () =>
 /** Whether a press landed on library space rather than a book or control. */
 const onEmptyLibrary = (target: EventTarget) =>
   !(target as Element).closest(
-    '.book-card, .book-detail, button, a, input, textarea, select, label, [role="button"], [role="separator"], [role="menu"], [role="dialog"]',
+    '.book-card, .detail-sheet, button, a, input, textarea, select, label, [role="button"], [role="separator"], [role="menu"], [role="dialog"]',
   );
 export function App() {
   const {
     documents: allDocuments,
     active,
+    tabIds,
+    closedTabGroups,
     theme,
     setTheme,
     open,
@@ -108,8 +113,8 @@ export function App() {
   const [filters, setFilters] = useState(initialFilters);
   const [libraryView, setLibraryView] = useState<"grid" | "list">("grid");
   const [editingLibrary, setEditingLibrary] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [libraryBody, setLibraryBody] = useState<HTMLDivElement | null>(null);
   const pressedEmpty = useRef(false);
   const [overviewDocument, setOverviewDocument] = useState<Document | null>(
     null,
@@ -142,6 +147,7 @@ export function App() {
         setSettingsHydrated(true);
       }),
     ])
+      .then(() => useReaderStore.getState().restoreSession())
       .catch((e) => setError(e.message))
       .finally(() => {
         setLoading(false);
@@ -388,6 +394,19 @@ export function App() {
       })
       .catch((e) => toast.error(e.message));
   };
+  const showLibrary = () => {
+    open(null);
+    void flushProgress()
+      .then(refreshLibrary)
+      .catch((e) => toast.error(e.message));
+  };
+  const tabsShown = documentTabsShown({ theme, tabIds, closedTabGroups });
+  const openDocuments = (docs: Document[]) => {
+    if (!docs.length) return;
+    useReaderStore.getState().openMany(docs);
+    setEditingLibrary(false);
+    void api.update(docs[0].id, {}).catch((e) => toast.error(e.message));
+  };
   const filtered = filterDocuments(
     documents,
     filter,
@@ -400,7 +419,6 @@ export function App() {
     commandQuery,
     initialFilters,
   );
-  const editing = documents.find((d) => d.id === editingId);
   const awaitingClassification = documents.some(
     (d) =>
       d.classificationStatus === "pending" ||
@@ -440,7 +458,6 @@ export function App() {
   const bookActions: BookMenuActions = {
     overview: setOverviewDocument,
     usage: setUsageDocument,
-    edit: (doc) => setEditingId(doc.id),
     move: (doc, library) => void moveDocument(doc, library),
     trash: (doc) => void trashWithUndo([doc.id]),
   };
@@ -449,6 +466,7 @@ export function App() {
       <div
         className="app"
         data-platform={window.neoreadDesktop?.platform}
+        data-has-tabs={tabsShown || undefined}
         onDragOver={(e) => {
           e.preventDefault();
         }}
@@ -471,20 +489,28 @@ export function App() {
             e.target.value = "";
           }}
         />
-        {active ? (
-          <Workspace
-            key={active.id}
-            document={active}
-            theme={resolvedTheme}
-            processing={jobs.find((job) => job.documentId === active.id)}
-            onBack={() => {
-              open(null);
-              void refreshLibrary();
-            }}
-            onSettings={() => setSettings(true)}
-          />
-        ) : (
-          <>
+        <DocumentTabs
+          onSelect={openDocument}
+          onLibrary={showLibrary}
+          onNew={() => {
+            showLibrary();
+            setCommand(true);
+          }}
+        />
+        <ReadingWorkspaces
+          theme={resolvedTheme}
+          jobs={jobs}
+          onLibrary={showLibrary}
+          onSettings={() => setSettings(true)}
+        />
+        {!active && (
+          <div
+            id="reader-library-panel"
+            className="library-tab-panel"
+            role="tabpanel"
+            aria-labelledby={tabsShown ? "reader-library-tab" : undefined}
+            tabIndex={-1}
+          >
             {/* Outside the sidebar, which is transformed while collapsed. */}
             <div className="window-top-drag" aria-hidden="true" />
             <aside
@@ -517,7 +543,7 @@ export function App() {
                   {[
                     {
                       id: "all",
-                      label: papers ? "全部论文" : "全部文档",
+                      label: papers ? "全部论文" : "全部图书",
                       icon: Library,
                       count: documents.length,
                     },
@@ -613,6 +639,7 @@ export function App() {
             </aside>
             {papers ? (
               <PaperLibrary
+                openDocuments={theme.documentTabs ? openDocuments : undefined}
                 documents={documents}
                 trash={trash}
                 jobs={jobsById}
@@ -662,7 +689,7 @@ export function App() {
                             ? "收藏"
                             : papers
                               ? "全部论文"
-                              : "全部文档"}
+                              : "全部图书"}
                     </h1>
                   </div>
                   {filter === "tags" ? (
@@ -676,18 +703,28 @@ export function App() {
                       />
                     </div>
                   ) : filter === "trash" ? null : (
-                    <Button
-                      variant={editingLibrary ? "secondary" : "outline"}
-                      aria-pressed={editingLibrary}
-                      disabled={!filtered.length && !editingLibrary}
-                      onClick={() => setEditingLibrary(!editingLibrary)}
-                    >
-                      {editingLibrary ? <Check /> : <Pencil />}
-                      {editingLibrary ? "完成" : "编辑"}
-                    </Button>
+                    <div className="library-topbar-actions">
+                      <LibraryFilterBar
+                        documents={documents}
+                        filters={filters}
+                        onChange={setFilters}
+                        view={libraryView}
+                        onViewChange={setLibraryView}
+                        count={filtered.length}
+                      />
+                      <Button
+                        variant={editingLibrary ? "secondary" : "outline"}
+                        aria-pressed={editingLibrary}
+                        disabled={!filtered.length && !editingLibrary}
+                        onClick={() => setEditingLibrary(!editingLibrary)}
+                      >
+                        {editingLibrary ? <Check /> : <CheckSquare />}
+                        {editingLibrary ? "完成" : "批量"}
+                      </Button>
+                    </div>
                   )}
                 </header>
-                <div className="book-library-body">
+                <div className="book-library-body" ref={setLibraryBody}>
                   <div className="book-list-pane">
                     <div className="library-content">
                       {filter === "favorites" && (
@@ -704,13 +741,10 @@ export function App() {
                         </div>
                       )}
                       {filter !== "tags" && filter !== "trash" && (
-                        <LibraryFilterBar
+                        <LibraryTagFilters
                           documents={documents}
                           filters={filters}
                           onChange={setFilters}
-                          view={libraryView}
-                          onViewChange={setLibraryView}
-                          count={filtered.length}
                         />
                       )}
                       {processingError && (
@@ -744,7 +778,6 @@ export function App() {
                           processingError={processingError}
                           openDocument={openDocument}
                           favorite={favorite}
-                          onEdit={setEditingId}
                           onSettings={() => setSettings(true)}
                           onOverview={setOverviewDocument}
                           onUsage={setUsageDocument}
@@ -753,6 +786,9 @@ export function App() {
                         />
                       ) : filtered.length ? (
                         <LibraryDocuments
+                          openDocuments={
+                            theme.documentTabs ? openDocuments : undefined
+                          }
                           key={JSON.stringify([filter, query, filters])}
                           documents={filtered}
                           libraryView={libraryView}
@@ -762,7 +798,6 @@ export function App() {
                           processingError={processingError}
                           openDocument={openDocument}
                           favorite={favorite}
-                          onEdit={setEditingId}
                           onMove={moveDocument}
                           onSettings={() => setSettings(true)}
                           onOverview={setOverviewDocument}
@@ -798,7 +833,7 @@ export function App() {
                                 setFilter("all");
                               }}
                             >
-                              显示全部文档
+                              显示全部图书
                             </Button>
                           )}
                           {!documents.length && !papers && (
@@ -814,27 +849,39 @@ export function App() {
                       )}
                     </div>
                   </div>
-                  {detail && (
-                    <ResizableBookDetail
-                      key={detail.id}
-                      doc={detail}
-                      actions={bookActions}
-                      open={openDocument}
-                      favorite={(doc) => void favorite(doc)}
-                    />
-                  )}
+                  <DetailSheet
+                    open={!!detail}
+                    onClose={() => setDetailId(null)}
+                    container={libraryBody}
+                    label="图书详情"
+                    width={libraryPreferences.books?.detailWidth}
+                    saveWidth={saveBookDetailWidth}
+                  >
+                    {detail && (
+                      <BookDetail
+                        key={detail.id}
+                        doc={detail}
+                        actions={bookActions}
+                        onSelectTag={(tag) => {
+                          setFilter("all");
+                          setFilters({
+                            ...initialFilters,
+                            tags: [tag.toLowerCase()],
+                          });
+                        }}
+                        pages={
+                          jobsById.get(detail.id)?.bookLayout?.pagesTotal ||
+                          jobsById.get(detail.id)?.pagesTotal
+                        }
+                        open={openDocument}
+                        favorite={(doc) => void favorite(doc)}
+                      />
+                    )}
+                  </DetailSheet>
                 </div>
               </main>
             )}
-          </>
-        )}
-        {editing && (
-          <DocumentEditor
-            key={editing.id}
-            document={editing}
-            documents={documents}
-            onClose={() => setEditingId(null)}
-          />
+          </div>
         )}
         <DocumentOverviewDialog
           key={overviewDocument?.id}
@@ -945,7 +992,7 @@ export function App() {
           onChoose={(library) => void importLargePapers(library)}
           onCancel={() => setLargePapers([])}
         />
-        <CiteHost />
+        {!window.neoreadDesktop?.setCitationVisible && <CiteHost />}
         <Toaster
           richColors
           position="bottom-right"

@@ -167,6 +167,20 @@ function ui(patch: Partial<CiteUI> = {}): CiteUI {
 const library = librarySource([attention, bert, chinese]);
 
 describe("citation session", () => {
+  it("refreshes legacy citation and bibliography fields into the new format", async () => {
+    const doc = new FakeDocument();
+    await new CiteSession(doc, ui(), library).run("addEditCitation");
+    await new CiteSession(doc, ui(), library).run("addEditBibliography");
+    for (const field of doc.fields)
+      field.code = field.code.replace(/^NEOREAD_/, "READER_").replaceAll("neoread://", "reader://");
+    const before = doc.texts();
+    await new CiteSession(doc, ui(), library).run("refresh");
+    expect(doc.texts()).toEqual(before);
+    expect(doc.fields[0].code).toMatch(/^NEOREAD_CITATION /);
+    expect(doc.fields[0].code).toContain("neoread://paper/attention");
+    expect(doc.fields[1].code).toMatch(/^NEOREAD_BIBLIOGRAPHY /);
+  });
+
   it("asks for preferences, then inserts a numbered citation", async () => {
     const doc = new FakeDocument();
     const dialogs = ui({
@@ -180,8 +194,8 @@ describe("citation session", () => {
     expect(parsed.kind).toBe("citation");
     if (parsed.kind !== "citation") return;
     expect(parsed.citation.citationItems.map((i) => i.uris[0])).toEqual([
-      "reader://paper/attention",
-      "reader://paper/bert",
+      "neoread://paper/attention",
+      "neoread://paper/bert",
     ]);
     expect(parsed.citation.citationItems[0].itemData.title).toBe(
       attention.title,
@@ -425,6 +439,26 @@ describe("citation formatting", () => {
 });
 
 describe("field codes", () => {
+  it("reads legacy fields without changing the source and writes NeoRead codes and URIs", () => {
+    const item = citation(attention);
+    item.citationItems[0].uris = ["reader://paper/attention", "https://doi.org/example"];
+    const legacy = "READER_CITATION " + JSON.stringify(item);
+    const parsed = parseField(legacy);
+    expect(parsed.kind).toBe("citation");
+    if (parsed.kind !== "citation") throw new Error("legacy citation missing");
+    expect(parsed.citation.citationItems[0].uris[0]).toBe("reader://paper/attention");
+    const written = citationCode(parsed.citation);
+    expect(written).toMatch(/^NEOREAD_CITATION /);
+    expect(written).toContain("neoread://paper/attention");
+    expect(written).toContain("https://doi.org/example");
+    expect(legacy).toMatch(/^READER_CITATION /);
+    expect(parseField("READER_BIBLIOGRAPHY")).toEqual({
+      kind: "bibliography", bibliography: { uncited: [], omitted: [] },
+    });
+    expect(parseField("READER_TEMP")).toEqual({ kind: "temp" });
+    expect(parseField("READER_CITATION {broken")).toEqual({ kind: "corrupt", code: "READER_CITATION {broken" });
+  });
+
   it("round-trips citations and rejects broken codes", () => {
     const value: Citation = {
       ...citation(attention),
@@ -436,9 +470,9 @@ describe("field codes", () => {
       kind: "citation",
       citation: { ...value, schema: expect.any(String) },
     });
-    expect(parseField("READER_CITATION {broken").kind).toBe("corrupt");
+    expect(parseField("NEOREAD_CITATION {broken").kind).toBe("corrupt");
     expect(parseField("ZOTERO_ITEM CSL_CITATION {}").kind).toBe("corrupt");
-    expect(parseField("READER_BIBLIOGRAPHY")).toEqual({
+    expect(parseField("NEOREAD_BIBLIOGRAPHY")).toEqual({
       kind: "bibliography",
       bibliography: { uncited: [], omitted: [] },
     });

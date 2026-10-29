@@ -24,6 +24,12 @@ vi.mock("@neoread/api", () => ({
     })),
     recoverAnnotations: vi.fn(async () => ({ checked: true })),
     annotations: vi.fn(async () => []),
+    annotationStream: vi.fn(async (_id, signal, callback) => {
+      callback("revision");
+      await new Promise<void>((resolve) =>
+        signal.addEventListener("abort", () => resolve(), { once: true }),
+      );
+    }),
     navigation: vi.fn(async () => ({ revision: 0, entries: {} })),
     messages: vi.fn(async () => []),
     blocks: vi.fn(async () => []),
@@ -31,6 +37,7 @@ vi.mock("@neoread/api", () => ({
     translations: vi.fn(async () => []),
   },
   setDiagnosticReporter: vi.fn(),
+  reportDiagnostic: vi.fn(),
   blockImageURL: vi.fn(),
   publicationURL: vi.fn(),
 }));
@@ -196,12 +203,13 @@ it.each(["取消", "Close"])(
   },
 );
 
-it("checks annotations once on opening, before loading marks, not on progress updates", async () => {
+it("loads saved annotations without running recovery on open or progress updates", async () => {
   await act(async () => render(0));
-  expect(api.recoverAnnotations).toHaveBeenCalledExactlyOnceWith(doc.id);
-  expect(
-    vi.mocked(api.recoverAnnotations).mock.invocationCallOrder[0],
-  ).toBeLessThan(vi.mocked(api.annotations).mock.invocationCallOrder[0]);
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  });
+  expect(api.annotations).toHaveBeenCalledWith(doc.id, expect.any(AbortSignal));
+  expect(api.recoverAnnotations).not.toHaveBeenCalled();
   await act(async () => render(1));
-  expect(api.recoverAnnotations).toHaveBeenCalledTimes(1);
+  expect(api.recoverAnnotations).not.toHaveBeenCalled();
 });

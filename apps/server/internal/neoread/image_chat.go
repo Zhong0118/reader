@@ -6,14 +6,80 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/draw"
+	_ "image/gif"
+	_ "image/jpeg"
 	"image/png"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
+
+var epubBlockIDPattern = regexp.MustCompile(`^e-[0-9a-f]{32}$`)
+
+// readEPUBBlockImage converts an EPUB image block to PNG, the format every
+// image attachment, copy and preview path already uses for PDF blocks.
+func (s *Server) readEPUBBlockImage(documentID, blockID string) (PDFBlock, []byte, error) {
+	if !epubBlockIDPattern.MatchString(blockID) {
+		return PDFBlock{}, nil, errors.New("图片编号无效")
+	}
+	blocks, err := s.readEPUBBlocks(documentID)
+	if err != nil {
+		return PDFBlock{}, nil, errors.New("图片索引不可用")
+	}
+	for _, b := range blocks {
+		if b.ID != blockID || b.Image == "" {
+			continue
+		}
+		block := PDFBlock{ID: b.ID, Label: "image", Text: b.Text, Caption: b.Text, Image: b.Image}
+		name, err := safeResource(b.Image)
+		if err != nil {
+			return block, nil, errors.New("图片附件不可读")
+		}
+		root, err := os.OpenRoot(filepath.Join(s.Store.Root, "cache", documentID))
+		if err != nil {
+			return block, nil, err
+		}
+		defer root.Close()
+		file, err := root.Open(filepath.FromSlash(name))
+		if err != nil {
+			return block, nil, errors.New("图片附件不可读")
+		}
+		defer file.Close()
+		data, err := io.ReadAll(io.LimitReader(file, (16<<20)+1))
+		if err != nil || len(data) > 16<<20 {
+			return block, nil, errors.New("图片附件过大或不可读")
+		}
+		config, _, err := image.DecodeConfig(bytes.NewReader(data))
+		if err != nil || config.Width <= 0 || config.Height <= 0 || int64(config.Width)*int64(config.Height) > 32_000_000 {
+			return block, nil, errors.New("图片格式暂不支持")
+		}
+		decoded, _, err := image.Decode(bytes.NewReader(data))
+		if err != nil {
+			return block, nil, errors.New("图片格式暂不支持")
+		}
+		switch decoded.(type) {
+		case *image.NRGBA, *image.RGBA, *image.Paletted, *image.Gray:
+		default:
+			// JPEG's YCbCr would otherwise encode as a 16-bit PNG.
+			rgba := image.NewNRGBA(decoded.Bounds())
+			draw.Draw(rgba, rgba.Bounds(), decoded, decoded.Bounds().Min, draw.Src)
+			decoded = rgba
+		}
+		var out bytes.Buffer
+		if err = png.Encode(&out, decoded); err != nil || out.Len() > 16<<20 {
+			return block, nil, errors.New("图片附件过大或不可读")
+		}
+		return block, out.Bytes(), nil
+	}
+	return PDFBlock{}, nil, errors.New("这份文档中没有此图片")
+}
 
 type ImageAttachment struct {
 	ID      string `json:"id"`
@@ -23,6 +89,9 @@ type ImageAttachment struct {
 }
 
 func (s *Server) readBlockImage(documentID, blockID string) (PDFBlock, []byte, error) {
+	if d, err := s.Store.Document(documentID); err == nil && d.Type == "epub" {
+		return s.readEPUBBlockImage(documentID, blockID)
+	}
 	if !blockIDPattern.MatchString(blockID) {
 		return PDFBlock{}, nil, errors.New("图片编号无效")
 	}
@@ -94,7 +163,12 @@ func (s *Server) chatDocument(w http.ResponseWriter, r *http.Request, document D
 		}
 		images = append(images, data)
 		attachments = append(attachments, ImageAttachment{ID: block.ID, Page: block.Page, Label: block.Label, Caption: block.Caption})
-		fmt.Fprintf(&descriptions, "\n附件 %d · 第 %d 页 · %s\n%s\n%s\n", len(images), block.Page, block.Label, block.Caption, block.Text)
+		if block.Page > 0 {
+			fmt.Fprintf(&descriptions, "\n附件 %d · 第 %d 页 · %s\n%s\n%s\n", len(images), block.Page, block.Label, block.Caption, block.Text)
+		} else {
+			// EPUB images have no page; their text is the alt text.
+			fmt.Fprintf(&descriptions, "\n附件 %d · 书中插图\n%s\n", len(images), block.Text)
+		}
 	}
 	config := s.aiConfig()
 	config.Primary = provider
@@ -123,7 +197,7 @@ func (s *Server) chatDocument(w http.ResponseWriter, r *http.Request, document D
 		return
 	}
 	defer s.aiMu.Unlock()
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Minute)
+	ctx, cancel := context.WithTimeout(r.Context(), time.Hour)
 	defer cancel()
 	ctx, finish, taskErr := s.beginDocumentTask(ctx, documentID)
 	if taskErr != nil {

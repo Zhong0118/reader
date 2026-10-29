@@ -11,6 +11,8 @@ import {
   DialogDescription,
 } from "@neoread/ui/components/dialog";
 export function imageLabel(image: ImageAttachment) {
+  // EPUB illustrations have no page.
+  if (!image.page) return "书中插图";
   const kind = /formula|equation/.test(image.label)
     ? "公式"
     : /table/.test(image.label)

@@ -18,6 +18,7 @@ import {
   TriangleAlert,
   X,
 } from "lucide-react";
+import { LegacyAnnotationMigration } from "./LegacyAnnotationMigration";
 import { DiagnosticExport } from "./DiagnosticExport";
 import { LibraryLocationSettings } from "./LibraryLocationSettings";
 import { CommandLineSettings } from "./CommandLineSettings";
@@ -760,6 +761,9 @@ export function Settings({
               <ProxySettings open={open} />
             )}
             <section>
+              <LegacyAnnotationMigration />
+            </section>
+            <section>
               <div className="flex items-start justify-between gap-3">
                 <h3 className="shrink-0 pt-2 text-sm font-medium">本地日志</h3>
                 <DiagnosticExport />
@@ -1013,6 +1017,20 @@ export function Settings({
             </section>
             <section className="space-y-4">
               <h3 className="text-sm font-medium">阅读交互</h3>
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  checked={theme.documentTabs === true}
+                  onCheckedChange={(checked) =>
+                    setTheme({ documentTabs: !!checked })
+                  }
+                />
+                <span>
+                  多文档标签页
+                  <span className="block text-xs text-muted-foreground">
+                    在标签页中同时打开多份文档，切换时保留阅读位置和对话；关闭后打开文档会替换当前文档
+                  </span>
+                </span>
+              </label>
               <label className="flex items-start gap-2 text-sm">
                 <Checkbox
                   checked={theme.autoCopySelection === true}

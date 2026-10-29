@@ -123,6 +123,9 @@ beforeEach(async ({ task }) => {
     );
     return child;
   });
+  vi.doMock("./citation-window", () => ({
+    createCitationWindow: vi.fn(async () => ({})),
+  }));
   vi.doMock("./cite-plugins", () => ({
     citePluginStatus: vi.fn(async () => []),
     installCitePlugin: vi.fn(),

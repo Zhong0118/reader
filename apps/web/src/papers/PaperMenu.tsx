@@ -8,6 +8,7 @@ import {
   Link2,
   Paperclip,
   Pin,
+  RefreshCw,
   Star,
   Tag,
   Trash2,
@@ -47,6 +48,7 @@ import {
 } from "./actions";
 import { paperLink } from "./format";
 import { exportAnnotatedPDFWithToast } from "../annotated-pdf-export";
+import { reparseDocument } from "../reparse-document";
 import { CitationMenuItems } from "./CitationMenu";
 import {
   categoryTree,
@@ -241,6 +243,10 @@ export function PaperMenuItems({
       {one && (
         <>
           <K.Separator />
+          <K.Item onClick={() => void reparseDocument(one)}>
+            <RefreshCw />
+            重新解析
+          </K.Item>
           <K.Item
             onClick={() =>
               void copyText(neoreadLink({ id: one.id }), "已复制阅读链接")

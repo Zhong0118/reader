@@ -60,6 +60,7 @@ import { searchPDFBlocks } from "./pdf-search";
 type Mode = "source" | "parallel" | "translation";
 export function PDFReadingView({
   document: doc,
+  active = true,
   theme,
   annotations,
   blocks,
@@ -73,6 +74,7 @@ export function PDFReadingView({
   events,
 }: {
   document: ReaderDocument;
+  active?: boolean;
   theme: ReaderTheme;
   annotations: Annotation[];
   blocks: PDFBlock[];
@@ -134,8 +136,12 @@ export function PDFReadingView({
     translationMotion.current.moving = false;
   };
   useLayoutEffect(() => {
+    if (!active) return;
     const host = pane.current;
     if (!host) return;
+    // Measure the panel, not the pane: the pane's own half-height padding
+    // would keep it from shrinking when the panel gets shorter.
+    const frame = host.parentElement ?? host;
     let initialized = false;
     const resize = () => {
       const node = Array.from(
@@ -146,7 +152,7 @@ export function PDFReadingView({
       const before = node?.getBoundingClientRect().top;
       host.style.setProperty(
         "--translation-inset",
-        `${host.clientHeight / 2}px`,
+        `${frame.clientHeight / 2}px`,
       );
       if (initialized && node && before !== undefined)
         host.scrollTop += node.getBoundingClientRect().top - before;
@@ -154,12 +160,12 @@ export function PDFReadingView({
     };
     resize();
     const observer = new ResizeObserver(resize);
-    observer.observe(host);
+    observer.observe(frame);
     return () => {
       observer.disconnect();
       cancelTranslationMotion();
     };
-  }, [mode, doc.id]);
+  }, [mode, doc.id, active]);
   const state = useRef({ mode, blocks, translations, events, theme });
   state.current = { mode, blocks, translations, events, theme };
   useSentenceMarks(
@@ -554,7 +560,7 @@ export function PDFReadingView({
     onReady(facade.current, toc);
   };
   useEffect(() => {
-    if (!engine) return;
+    if (!engine || !active) return;
     hoverOwner.current = undefined;
     setHoveredBlock(undefined);
     engine.hoverBlock?.(null);
@@ -612,7 +618,7 @@ export function PDFReadingView({
       cancelled = true;
       engine.hoverBlock?.(null);
     };
-  }, [mode, engine]);
+  }, [mode, engine, active]);
   useEffect(() => () => cancelAnimationFrame(scrollFrame.current), []);
   useEffect(() => {
     const release = () => {
@@ -857,6 +863,7 @@ export function PDFReadingView({
             onKeyDownCapture={() => input("source")}
           >
             <ReaderView
+              active={active}
               document={doc}
               theme={theme}
               annotations={annotations.filter(

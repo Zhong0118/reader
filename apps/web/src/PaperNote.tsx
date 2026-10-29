@@ -23,6 +23,7 @@ import {
   DialogTrigger,
 } from "@neoread/ui/components/dialog";
 import { annotationDigest } from "./notes-export";
+import { registerTabCloseGuard } from "./document-tab-guards";
 import { getPaperNote } from "./paper-note-state";
 import { PaperNoteRichEditor } from "./PaperNoteRichEditor";
 
@@ -63,6 +64,17 @@ export function PaperNote({
       active = false;
     };
   }, [note]);
+  useEffect(
+    () =>
+      registerTabCloseGuard(documentId, () =>
+        note.getSnapshot().status === "saving"
+          ? { blocked: true, message: "论文笔记正在保存，请保存完成后再关闭。" }
+          : note.hasPending()
+            ? { message: "论文笔记还有未保存的修改，关闭后可能丢失。" }
+            : null,
+      ),
+    [documentId, note],
+  );
   const save = () => void note.flush().catch(() => {});
   const digest = unavailable
     ? ""

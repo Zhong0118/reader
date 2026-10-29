@@ -110,9 +110,12 @@ export function CoverProcessing({
     const timer = setTimeout(() => setPhase(nextPhase), 750);
     return () => clearTimeout(timer);
   }, [leaving, nextPhase]);
-  if (job.status === "paused") return null;
+  if (job.status === "paused")
+    return job.bookLayout ? <CoverBookLayout layout={job.bookLayout} /> : null;
   if (phase === "ready")
-    return job.incomplete ? (
+    return job.bookLayout ? (
+      <CoverBookLayout layout={job.bookLayout} />
+    ) : job.incomplete ? (
       <span className="cover-incomplete" title={job.warning || job.detail}>
         正文不完整
       </span>
@@ -246,6 +249,69 @@ export function CoverProcessing({
           </div>
         );
       })}
+    </div>
+  );
+}
+const bookLayoutLabels = {
+  queued: "等待解析",
+  running: "解析中",
+  failed: "解析失败",
+  complete: "解析完成",
+};
+// Book PDFs parse their layout in the background; fade out once every page is parsed.
+function CoverBookLayout({
+  layout,
+}: {
+  layout: NonNullable<Processing["bookLayout"]>;
+}) {
+  const active = layout.status !== "complete";
+  const [visible, setVisible] = useState(active);
+  useEffect(() => {
+    if (active) {
+      setVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => setVisible(false), 750);
+    return () => clearTimeout(timer);
+  }, [active]);
+  if (!visible) return null;
+  const label = bookLayoutLabels[layout.status];
+  const value = layout.pagesTotal
+    ? Math.min(100, (layout.pagesDone / layout.pagesTotal) * 100)
+    : null;
+  return (
+    <div
+      className="cover-processing"
+      data-compact={false}
+      data-leaving={!active}
+      title={
+        layout.status === "failed"
+          ? "打开图书或重启应用后会重新解析"
+          : undefined
+      }
+    >
+      <div
+        className="processing-step"
+        data-active={layout.status === "running"}
+        data-done={!active || undefined}
+      >
+        <div className="processing-step-heading" role="status">
+          {!active && <Check className="size-3 processing-complete-icon" />}
+          <span className="processing-label">{label}</span>
+          {layout.pagesTotal > 0 && (
+            <span className="processing-count">
+              <span className="processing-count-value" key={layout.pagesDone}>
+                {layout.pagesDone} / {layout.pagesTotal} 页
+              </span>
+            </span>
+          )}
+        </div>
+        <Progress
+          aria-label={label}
+          value={value ?? (layout.status === "running" ? null : 0)}
+          className="processing-progress"
+        />
+      </div>
     </div>
   );
 }

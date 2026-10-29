@@ -7,11 +7,11 @@ const names = { word: "Microsoft Word", wps: "WPS 文字" } as const;
 
 function describe(plugin: CitePluginStatus) {
   if (!plugin.supported) return "当前系统暂不支持。";
-  if (!plugin.available) return "这个 Reader 版本没有附带该插件。";
+  if (!plugin.available) return "这个 NeoRead 版本没有附带该插件。";
   if (plugin.installed)
     return plugin.kind === "word"
-      ? "已安装。重新启动 Word 后，在“Reader”选项卡中插入引注。"
-      : "已安装。重新启动 WPS 后，在“Reader”选项卡中插入引注。";
+      ? "已安装。重新启动 Word 后，在“NeoRead”选项卡中插入引注。"
+      : "已安装。重新启动 WPS 后，在“NeoRead”选项卡中插入引注。";
   if (!plugin.detected)
     return plugin.kind === "word"
       ? "未检测到 Word。安装并打开一次 Word 后再安装插件。"
@@ -57,7 +57,7 @@ export function CitePluginSettings({ open }: { open: boolean }) {
     <section className="text-sm">
       <h3 className="mb-3 font-medium">Word / WPS 引用插件</h3>
       <p className="text-xs text-muted-foreground">
-        在文档中插入论文库中的引注和参考文献表。使用时需保持 Reader 运行。
+        在文档中插入论文库中的引注和参考文献表。使用时需保持 NeoRead 运行。
       </p>
       <ul className="mt-3 flex flex-col gap-3">
         {plugins.map((plugin) => (

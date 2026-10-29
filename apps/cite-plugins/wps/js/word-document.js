@@ -1,10 +1,12 @@
-// Reader citation operations on a Word-compatible object model (WPS JS API).
+// NeoRead citation operations on a Word-compatible object model (WPS JS API).
 // The Word VBA template implements the same operations; keep them in step.
 (function (root) {
   "use strict";
 
-  const PREFIX = "READER_";
-  const PREF = "READER_PREF_";
+  const PREFIX = "NEOREAD_";
+  const PREF = "NEOREAD_PREF_";
+  const LEGACY_PREFIX = "READER_";
+  const LEGACY_PREF = "READER_PREF_";
   const PREF_CHUNK = 255;
   const wdFieldEmpty = -1;
   const wdCollapseEnd = 0;
@@ -17,24 +19,25 @@
     bibliography: "{Bibliography}",
   };
 
-  /** " ADDIN READER_CITATION {...} " → "READER_CITATION {...}". */
-  function readerCode(text) {
+  /** " ADDIN NEOREAD_CITATION {...} " → "NEOREAD_CITATION {...}". */
+  function neoReadCode(text) {
     let code = String(text || "").trim();
     if (code.toUpperCase().startsWith("ADDIN ")) code = code.slice(6).trim();
-    return code.startsWith(PREFIX) ? code : null;
+    // Preserve the actual prefix in snapshots so a migration is also a conflict.
+    return code.startsWith(PREFIX) || code.startsWith(LEGACY_PREFIX) ? code : null;
   }
 
   function createDocument(app) {
     const doc = app.ActiveDocument;
     let snapshot = null;
 
-    /** Reader fields in reading order; note fields sort by their reference. */
+    /** NeoRead fields in reading order; note fields sort by their reference. */
     function collect() {
       const found = [];
       const visit = (fields, noteIndex, anchor) => {
         for (let i = 1; i <= fields.Count; i++) {
           const field = fields.Item(i);
-          const code = readerCode(field.Code.Text);
+          const code = neoReadCode(field.Code.Text);
           if (code === null) continue;
           found.push({
             field,
@@ -56,7 +59,7 @@
       return found.sort((a, b) => a.anchor - b.anchor || a.offset - b.offset);
     }
 
-    // Indexes belong to the last state returned to Reader. Keep those objects;
+    // Indexes belong to the last state returned to NeoRead. Keep those objects;
     // never apply old indexes to a newly collected list after the user edits.
     function validateFields(indexes = []) {
       const conflict = () => new Error("文档中的域已改变，请重试");
@@ -69,7 +72,7 @@
           // Compare live ranges rather than JS proxy identity: hosts may return
           // different wrappers for the same native field. Deleted objects throw.
           if (
-            readerCode(entry.field.Code.Text) !== entry.code ||
+            neoReadCode(entry.field.Code.Text) !== entry.code ||
             live.code !== entry.code ||
             live.field.Code.Start !== entry.field.Code.Start ||
             live.field.Result.StoryType !== entry.field.Result.StoryType
@@ -104,13 +107,25 @@
 
     function readData() {
       const props = doc.CustomDocumentProperties;
+      let prefix = LEGACY_PREF;
+      for (let i = 1; i <= props.Count; i++) {
+        if (String(props.Item(i).Name).startsWith(PREF)) {
+          prefix = PREF;
+          break;
+        }
+      }
+      return readDataChunks(prefix);
+    }
+
+    function readDataChunks(prefix) {
+      const props = doc.CustomDocumentProperties;
       const chunks = [];
       for (let i = 1; i <= props.Count; i++) {
         const prop = props.Item(i);
         const name = String(prop.Name);
-        if (name.startsWith(PREF))
+        if (name.startsWith(prefix))
           chunks.push([
-            Number(name.slice(PREF.length)) || 0,
+            Number(name.slice(prefix.length)) || 0,
             String(prop.Value),
           ]);
       }
@@ -167,7 +182,7 @@
       const field = doc.Fields.Add(
         target,
         wdFieldEmpty,
-        "ADDIN READER_TEMP",
+        "ADDIN NEOREAD_TEMP",
         false,
       );
       field.Result.Text = PLACEHOLDER[op.kind] || PLACEHOLDER.citation;
@@ -177,7 +192,7 @@
       app.Selection.Collapse(wdCollapseEnd);
       snapshot = collect();
       const index = snapshot.findIndex(
-        (entry) => entry.code === "READER_TEMP",
+        (entry) => entry.code === "NEOREAD_TEMP",
       );
       if (index < 0) throw new Error("插入的域没有出现在文档中");
       return { index };
@@ -262,7 +277,7 @@
         const entry = fields[update.index];
         if (update.code !== undefined) {
           entry.field.Code.Text = " ADDIN " + update.code + " ";
-          entry.code = readerCode(entry.field.Code.Text);
+          entry.code = neoReadCode(entry.field.Code.Text);
         }
         if (update.text) writeRuns(entry.field, [update.text]);
         if (update.bibliography) {
@@ -291,7 +306,7 @@
       const props = doc.CustomDocumentProperties;
       for (let i = props.Count; i >= 1; i--) {
         const prop = props.Item(i);
-        if (String(prop.Name).startsWith(PREF)) prop.Delete();
+        if (String(prop.Name).startsWith(PREF) || String(prop.Name).startsWith(LEGACY_PREF)) prop.Delete();
       }
       const data = String(op.data || "");
       for (let i = 0; i * PREF_CHUNK < data.length; i++)
@@ -321,7 +336,7 @@
           case "Document.setData":
             return setData(op);
           default:
-            throw new Error("插件版本过旧，请在 Reader 设置中重新安装");
+            throw new Error("插件版本过旧，请在 NeoRead 设置中重新安装");
         }
       },
       activate() {
@@ -330,7 +345,7 @@
     };
   }
 
-  const api = { createDocument, readerCode };
-  root.ReaderCiteWord = api;
+  const api = { createDocument, neoReadCode };
+  root.NeoReadCiteWord = api;
   if (typeof module === "object" && module.exports) module.exports = api;
 })(typeof globalThis === "object" ? globalThis : this);

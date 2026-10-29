@@ -22,6 +22,7 @@ import {
 import { PaperAttachments, AttachmentUploads } from "./PaperAttachments";
 import { toast } from "sonner";
 import { useAttachmentDrop } from "./attachment-drop";
+import { useClickIntent } from "../DetailSheet";
 
 export function AttachmentRows({
   doc,
@@ -36,8 +37,10 @@ export function AttachmentRows({
   const items = useAttachments((s) => s.items[doc.id]);
   const error = useAttachments((s) => s.errors[doc.id]);
   const selected = useAttachments((s) => s.selected);
+  const selectedPaper = usePaperUI((s) => s.selectedId);
   const batch = useAttachments((s) => s.uploads[doc.id]);
   const { armed, ...dropHandlers } = useAttachmentDrop(doc, true);
+  const clickIntent = useClickIntent(`${selectedPaper}:${selected?.id}`);
   if (items?.length === 0 && !batch && !error) return null;
   const select = (item: PaperAttachment | null) => {
     usePaperUI.getState().select(doc.id);
@@ -66,21 +69,36 @@ export function AttachmentRows({
         </span>
       </>
     );
-    const open = () => (item ? openAttachment(doc, item) : openDocument(doc));
+    const key = item?.id || "primary";
+    const open = () => {
+      clickIntent.cancel();
+      if (item) openAttachment(doc, item);
+      else openDocument(doc);
+    };
     return (
-      <ContextMenu key={item?.id || "primary"}>
+      <ContextMenu key={key}>
         <ContextMenuTrigger
           render={colSpan ? <tr /> : <div />}
           role={colSpan ? undefined : "listitem"}
           className="paper-child-row"
           data-attachment-drop={armed || undefined}
           {...dropHandlers}
-          data-attachment-row={item?.id || "primary"}
+          data-attachment-row={key}
           data-parent-id={doc.id}
-          data-selected={(!!item && selected?.id === item.id) || undefined}
+          data-selected={
+            (!!item && selected?.id === item.id) ||
+            clickIntent.pending === `${doc.id}:${key}` ||
+            undefined
+          }
           tabIndex={0}
           aria-label={`${title}，${doc.title}的附件`}
-          onClick={() => select(item)}
+          onClick={(event) => {
+            // The second click of a double click opens instead, and an open
+            // sheet switches at once; otherwise wait out the double click.
+            if (event.detail > 1) return;
+            if (usePaperUI.getState().selectedId) select(item);
+            else clickIntent.defer(`${doc.id}:${key}`, () => select(item));
+          }}
           onDoubleClick={open}
           onKeyDown={(event) => {
             if (event.key === "Enter") {

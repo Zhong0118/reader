@@ -278,3 +278,59 @@ it("selects collapsed descendants with select all and can deselect all", async (
       .disabled,
   ).toBe(true);
 });
+
+it("toggles all nested branches with one button, one save per click, without navigating", async () => {
+  const nested: TOCItem[] = [
+    {
+      ...outline[0],
+      children: [
+        {
+          ...outline[0].children[0],
+          children: [
+            {
+              id: "c",
+              label: "Leaf",
+              location: { type: "pdf", page: 3 },
+              children: [],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  mocks.load.mockResolvedValue({
+    revision: 0,
+    entries: { b: { label: "Renamed" } },
+  });
+  await act(async () =>
+    root.render(
+      <NavigationTree
+        documentId="d"
+        type="pdf"
+        outline={nested}
+        blocks={[]}
+        annotations={[]}
+        go={go}
+      />,
+    ),
+  );
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="全部折叠"]')!.click(),
+  );
+  expect(mocks.save).toHaveBeenCalledTimes(1);
+  expect(mocks.save.mock.calls[0][1].entries).toEqual({
+    a: { collapsed: true },
+    b: { label: "Renamed", collapsed: true },
+  });
+  await act(async () =>
+    host.querySelector<HTMLButtonElement>('[aria-label="全部展开"]')!.click(),
+  );
+  expect(mocks.save).toHaveBeenCalledTimes(2);
+  expect(mocks.save.mock.calls[1][1].entries).toEqual({
+    a: { collapsed: false },
+    b: { label: "Renamed", collapsed: false },
+  });
+  expect(host.querySelector('[aria-label="全部折叠"]')).not.toBeNull();
+  expect(host.querySelector('[aria-label="全部展开"]')).toBeNull();
+  expect(go).not.toHaveBeenCalled();
+});

@@ -1,18 +1,11 @@
-import type { Document, DocumentCategory, TagBoard } from "@neoread/core";
-export const categoryLabels: Record<DocumentCategory, string> = {
-  book: "书籍",
-  article: "文章",
-  paper: "论文",
-};
+import type { Document, TagBoard } from "@neoread/core";
 export interface LibraryFilters {
-  category: string;
   format: string;
   reading: string;
   tags: string[];
   sort: string;
 }
 export const initialFilters: LibraryFilters = {
-  category: "all",
   format: "all",
   reading: "all",
   tags: [],
@@ -37,7 +30,6 @@ export function filterDocuments(
       const tags = d.tags.map((tag) => tag.toLowerCase());
       return (
         (view !== "favorites" || d.favorite) &&
-        (filters.category === "all" || d.category === filters.category) &&
         (filters.format === "all" || d.type === filters.format) &&
         (filters.reading === "all" ||
           (filters.reading === "unread"

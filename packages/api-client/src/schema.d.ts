@@ -483,6 +483,101 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/annotations/migrate-legacy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Manually migrate legacy annotations; opening documents never triggers migration */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Migration result; unmatched annotations are preserved */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            /** @description Original annotations migrated */
+                            migrated: number;
+                            /** @description Legacy annotations left unchanged */
+                            skipped: number;
+                            /** @description Documents that failed to migrate */
+                            failed: number;
+                        };
+                    };
+                };
+                /** @description Unable to read legacy annotations */
+                500: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/documents/{id}/annotations/stream": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Subscribe to committed annotation recovery/migration revisions, independently of chapter subscriptions */
+        get: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description SSE revision events with a JSON string token, initially and after committed changes. The client reloads saved annotations only when the token changes, including reconnects. No source parsing or recovery is triggered. */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "text/event-stream": string;
+                    };
+                };
+                /** @description Document not found */
+                404: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{id}/annotations/recover": {
         parameters: {
             query?: never;
@@ -2549,6 +2644,55 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/documents/{id}/reparse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Rebuild the EPUB publication cache or PDF layout from the stored original while keeping document identity and user data. */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path: {
+                    id: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Reparsed */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            reparsed: boolean;
+                        };
+                    };
+                };
+                /** @description Error */
+                default: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["Error"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/documents/{id}/blocks": {
         parameters: {
             query?: never;
@@ -2604,7 +2748,10 @@ export interface paths {
         };
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description Return spine metadata with empty blocks and estimated character counts, without reading chapter bodies. */
+                    summary?: "1";
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -2668,6 +2815,7 @@ export interface paths {
                     };
                     content: {
                         "application/json": {
+                            blocks?: components["schemas"]["EPUBReadingBlock"][];
                             /** @description Server sanitized reader-mode HTML; no publisher CSS */
                             html: string;
                         };
@@ -3247,7 +3395,10 @@ export interface paths {
         /** @description Authenticated translation subscription. Sends a snapshot on connection, then flushes each persisted translation block immediately. Reconnect obtains a new snapshot. Does not start or cancel generation. */
         get: {
             parameters: {
-                query?: never;
+                query?: {
+                    /** @description EPUB chapter hrefs. When provided, only these chapters are parsed and their translations subscribed to. */
+                    href?: string[];
+                };
                 header?: never;
                 path: {
                     id: string;
@@ -5087,6 +5238,13 @@ export interface components {
             startedAt?: string;
             completedAt?: string;
             usageTracked?: boolean;
+            /** @description Background layout parsing of a book PDF, independent of translation. A finished job stays as complete with its final page count. */
+            readonly bookLayout?: {
+                /** @enum {string} */
+                status: "queued" | "running" | "failed" | "complete";
+                pagesDone: number;
+                pagesTotal: number;
+            };
         };
         PDFBlock: {
             id: string;
@@ -5381,6 +5539,7 @@ export interface components {
             start?: number;
             end?: number;
             endBlockId?: string;
+            endHref?: string;
             locator?: string;
             progression?: number;
             quote?: string;

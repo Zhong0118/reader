@@ -9,16 +9,28 @@ export async function epubNavigationOrders(
   toc: TOCItem[],
   annotations: Annotation[],
   signal?: AbortSignal,
+  exact = true,
 ) {
   const chapters = await api.epubChapters(id, signal);
-  const blocks = chapters.chapters.flatMap((chapter) => chapter.blocks);
+  const bookmarked = new Set(
+    annotations
+      .filter((a) => a.kind === "bookmark" && a.location.type === "epub")
+      .map((a) => (a.location as EPUBLocation).href.split("#")[0]),
+  );
   const entries = [
     ...flattenTOC(toc),
     ...annotations
       .filter((a) => a.kind === "bookmark")
       .map((a) => ({ id: `bookmark:${a.id}`, location: a.location })),
   ];
-  const html = new Map<string, Promise<Document>>();
+  const details = new Map<
+    string,
+    Promise<{
+      doc: Document;
+      blocks: import("@neoread/core").EPUBReadingBlock[];
+    }>
+  >();
+  const ordinal = new Map<string, number>();
   const result: Record<string, number[]> = {};
   for (const entry of entries) {
     if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
@@ -27,9 +39,30 @@ export async function epubNavigationOrders(
     const [href, fragment] = location.href.split("#");
     const chapterIndex = chapters.chapters.findIndex((c) => c.href === href);
     if (chapterIndex < 0) throw new Error("目录条目不属于书籍阅读顺序");
-    const chapter = blocks.filter(
-      (b) => b.location.href.split("#")[0] === href,
-    );
+    if (!exact && !bookmarked.has(href)) {
+      const index = ordinal.get(href) ?? 0;
+      result[entry.id] = [chapterIndex, index];
+      ordinal.set(href, index + 1);
+      continue;
+    }
+    if (
+      !fragment &&
+      !location.blockId &&
+      !location.translation?.blockId &&
+      location.progression === undefined
+    ) {
+      result[entry.id] = [chapterIndex, epubOffsets(location)?.start ?? 0];
+      continue;
+    }
+    if (!details.has(href))
+      details.set(
+        href,
+        api.epubChapter(id, href, signal).then((r) => ({
+          doc: new DOMParser().parseFromString(r.html, "text/html"),
+          blocks: r.blocks ?? chapters.chapters[chapterIndex].blocks,
+        })),
+      );
+    const { doc, blocks: chapter } = await details.get(href)!;
     let offset = epubOffsets(location)?.start;
     const block = chapter.find(
       (b) => b.id === (location.blockId ?? location.translation?.blockId),
@@ -41,14 +74,6 @@ export async function epubNavigationOrders(
             .slice(0, chapter.indexOf(block))
             .reduce((n, b) => n + b.text.length, 0)) + (location.start ?? 0);
     if (offset === undefined && fragment) {
-      if (!html.has(href))
-        html.set(
-          href,
-          api
-            .epubChapter(id, href, signal)
-            .then((r) => new DOMParser().parseFromString(r.html, "text/html")),
-        );
-      const doc = await html.get(href)!;
       let anchor: Element | null = null;
       try {
         anchor = doc.getElementById(decodeURIComponent(fragment));

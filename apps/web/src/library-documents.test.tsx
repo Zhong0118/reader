@@ -6,6 +6,7 @@ import { api } from "@neoread/api";
 import { toast } from "sonner";
 import type { Document } from "@neoread/core";
 import { LibraryDocuments } from "./LibraryDocuments";
+import { doubleClickWindow } from "./DetailSheet";
 import { useReaderStore } from "./store";
 vi.mock("@neoread/api", () => ({
   api: {
@@ -48,6 +49,7 @@ const docs: Document[] = ["Alpha", "Beta"].map((title, i) => ({
   percentage: 0,
 }));
 let root: Root, host: HTMLDivElement;
+const openMany = vi.fn();
 const open = vi.fn(),
   edit = vi.fn(),
   overview = vi.fn();
@@ -62,8 +64,9 @@ function Harness() {
       jobs={[]}
       processingError=""
       openDocument={open}
+      openDocuments={openMany}
       favorite={() => {}}
-      onEdit={edit}
+
       onSettings={() => {}}
       onOverview={overview}
       onUsage={() => {}}
@@ -117,7 +120,7 @@ const button = (label: string) =>
     (b) => b.textContent?.trim() === label,
   )!;
 it("moves selected documents to the trash, keeps failures and offers an undo", async () => {
-  await act(async () => button("编辑").click());
+  await act(async () => button("批量").click());
   await act(async () =>
     host.querySelector("article")!.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -149,7 +152,7 @@ it("moves selected documents to the trash, keeps failures and offers an undo", a
   expect(open).not.toHaveBeenCalled();
 });
 it("leaves selection mode after all selected documents move to the trash", async () => {
-  await act(async () => button("编辑").click());
+  await act(async () => button("批量").click());
   await act(async () =>
     host.querySelector("article")!.dispatchEvent(
       new KeyboardEvent("keydown", {
@@ -164,10 +167,10 @@ it("leaves selection mode after all selected documents move to the trash", async
 
   await act(async () => button("移到回收站").click());
 
-  expect(button("编辑")).toBeDefined();
+  expect(button("批量")).toBeDefined();
   expect(host.textContent).not.toContain("已选");
 });
-it("opens the context menu on the targeted document and edits that document", async () => {
+it("opens the context menu on the targeted document without a legacy editor", async () => {
   const card = host.querySelectorAll("article")[1];
   await act(async () =>
     card.dispatchEvent(
@@ -179,12 +182,18 @@ it("opens the context menu on the targeted document and edits that document", as
       }),
     ),
   );
-  const item = [
+  const items = [
     ...document.querySelectorAll<HTMLElement>('[role="menuitem"]'),
-  ].find((el) => el.textContent?.includes("编辑文档信息"));
-  expect(item).toBeDefined();
-  await act(async () => item!.click());
-  expect(edit).toHaveBeenCalledExactlyOnceWith("1");
+  ];
+  expect(items.some((el) => el.textContent?.includes("编辑文档信息"))).toBe(
+    false,
+  );
+  const overviewItem = items.find((el) => el.textContent?.includes("文档概要"));
+  expect(overviewItem).toBeDefined();
+  await act(async () => overviewItem!.click());
+  expect(overview).toHaveBeenCalledExactlyOnceWith(
+    useReaderStore.getState().documents[1],
+  );
   expect(open).not.toHaveBeenCalled();
 });
 
@@ -203,14 +212,14 @@ it("requires edit mode before selecting and clears selection on exit", async () 
     shortcut();
   });
   expect(host.textContent).not.toContain("已选");
-  await act(async () => button("编辑").click());
+  await act(async () => button("批量").click());
   await act(async () => {
     shortcut();
   });
   expect(host.textContent).toContain("已选 2 份");
   await act(async () => button("完成").click());
   expect(host.querySelector('[role="checkbox"]')).toBeNull();
-  await act(async () => button("编辑").click());
+  await act(async () => button("批量").click());
   expect(host.textContent).toContain("已选 0 份");
 });
 
@@ -221,6 +230,45 @@ it("opens a document on click without a detail panel", async () => {
   expect(open).toHaveBeenCalledExactlyOnceWith(docs[0]);
 });
 
+const waitOutDoubleClick = () =>
+  act(() => new Promise((done) => setTimeout(done, doubleClickWindow + 20)));
+
+it("opens on double click without showing the details first", async () => {
+  withDetail = true;
+  await act(async () => root.render(<Harness />));
+  const [alpha] = host.querySelectorAll("article");
+  const cover = alpha.querySelector<HTMLButtonElement>(".book-cover")!;
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 1 })),
+  );
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("click", { bubbles: true, detail: 2 })),
+  );
+  await act(async () =>
+    cover.dispatchEvent(new MouseEvent("dblclick", { bubbles: true })),
+  );
+  await waitOutDoubleClick();
+  expect(open).toHaveBeenCalledExactlyOnceWith(docs[0]);
+  expect(alpha.dataset.active).toBe("false");
+});
+
+it("drops a held click once a key press takes over", async () => {
+  withDetail = true;
+  await act(async () => root.render(<Harness />));
+  const [alpha] = host.querySelectorAll("article");
+  await act(async () =>
+    alpha.querySelector<HTMLButtonElement>(".book-cover")!.click(),
+  );
+  expect(alpha.dataset.active).toBe("true");
+  await act(async () =>
+    alpha.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }),
+    ),
+  );
+  await waitOutDoubleClick();
+  expect(alpha.dataset.active).toBe("false");
+});
+
 it("shows details on click and opens on double click", async () => {
   withDetail = true;
   await act(async () => root.render(<Harness />));
@@ -228,7 +276,12 @@ it("shows details on click and opens on double click", async () => {
   const cover = alpha.querySelector<HTMLButtonElement>(".book-cover")!;
   await act(async () => cover.click());
   expect(open).not.toHaveBeenCalled();
+  // The card highlights at once; the details follow after the double-click
+  // window.
   expect(alpha.dataset.active).toBe("true");
+  await waitOutDoubleClick();
+  expect(alpha.dataset.active).toBe("true");
+  // With the details showing, another click switches at once.
   await act(async () =>
     beta.querySelector<HTMLButtonElement>(".book-title")!.click(),
   );
@@ -257,4 +310,20 @@ it("shows details on click and opens on double click", async () => {
     ),
   );
   expect(alpha.dataset.active).toBe("false");
+});
+
+it("opens the selected documents together in tabs", async () => {
+  await act(async () => button("批量").click());
+  await act(async () =>
+    host.querySelector("article")!.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "a",
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  await act(async () => button("在标签页中打开").click());
+  expect(openMany).toHaveBeenCalledExactlyOnceWith(docs);
 });

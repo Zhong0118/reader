@@ -191,10 +191,10 @@ it.each([false, true])(
       expect(s.adapt).not.toHaveBeenCalled();
       expect(s.viewer.currentScale).toBeGreaterThan(0.25);
       expect(await finish(first)).toBe(true);
-      expect(s.viewer.currentScale).toBe(1.5);
+      expect(s.viewer.currentScale).toBe(1.42);
       centered(s, "a");
       expect(await finish(s.nav.focusBlock("a"))).toBe(true);
-      expect(s.viewer.currentScale).toBe(1.5);
+      expect(s.viewer.currentScale).toBe(1.42);
     } finally {
       s.destroy();
     }
@@ -233,7 +233,7 @@ it("smoothly scales and centers from the first click without a mode or an initia
     expect(s.viewer.currentScale).toBeGreaterThan(1);
     expect(s.viewer.currentScale).toBeLessThan(1.5);
     await finish(pending);
-    expect(s.viewer.currentScale).toBe(1.5);
+    expect(s.viewer.currentScale).toBe(1.42);
     centered(s, "a");
     expect(s.focus).toHaveBeenCalledWith("a");
     expect(s.focus).toHaveBeenLastCalledWith(null);
@@ -262,24 +262,28 @@ it("remeasures a resized panel on every repeated click and caps automatic zoom a
     s.nav.destroy();
   }
 });
-it("top-aligns tall images and lets a new click replace an unfinished focus", async () => {
-  const s = setup();
-  try {
-    const first = s.nav.focusBlock("a");
-    await vi.advanceTimersByTimeAsync(96);
-    const before = s.rect("image");
-    const second = s.nav.focusBlock("image");
-    expect(s.rect("image")).toEqual(before);
-    await finish(second);
-    await first;
-    centered(s, "image");
-    expect(s.rect("image").top).toBe(50);
-    expect(s.focus).toHaveBeenCalledWith("image");
-    expect(s.focus).toHaveBeenLastCalledWith(null);
-  } finally {
-    s.nav.destroy();
-  }
-});
+it.each(["source", "parallel"] as const)(
+  "fits tall images within the %s viewport and lets a new click replace unfinished focus",
+  async (mode) => {
+    const s = setup();
+    try {
+      const first = s.nav.focusBlock("a");
+      await vi.advanceTimersByTimeAsync(96);
+      const before = s.rect("image");
+      const second = s.nav.focusBlock("image", mode);
+      expect(s.rect("image")).toEqual(before);
+      await finish(second);
+      await first;
+      centered(s, "image");
+      expect(s.rect("image").height).toBeLessThanOrEqual(s.size.height - 32);
+      expect(s.rect("image").width).toBeLessThanOrEqual(s.size.width - 32);
+      expect(s.focus).toHaveBeenCalledWith("image");
+      expect(s.focus).toHaveBeenLastCalledWith(null);
+    } finally {
+      s.nav.destroy();
+    }
+  },
+);
 it("cancels pending page geometry on manual zoom and uses fresh dimensions when page loading completes", async () => {
   const s = setup();
   try {
@@ -373,4 +377,16 @@ it("coalesces focus zoom into one final redraw and does not redraw on an identic
   } finally {
     s.nav.destroy();
   }
+});
+
+it("keeps a wide source-only block within the reading viewport", async () => {
+  const s = setup();
+  await finish(s.nav.focusBlock("b", "source"));
+  expect(s.viewer.currentScale).toBeLessThan(1.5);
+  const block = s.rect("b");
+  expect(block.width).toBeLessThanOrEqual(s.size.width - 32);
+  expect(block.left + block.width / 2).toBeCloseTo(30 + s.size.width / 2);
+  s.size.width = 400;
+  await finish(s.nav.focusBlock("b", "source"));
+  expect(s.rect("b").width).toBeLessThanOrEqual(368);
 });

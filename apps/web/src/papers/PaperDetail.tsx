@@ -11,7 +11,6 @@ import {
   Quote,
   RefreshCw,
   Star,
-  Tag,
   X,
 } from "lucide-react";
 import type {
@@ -49,7 +48,6 @@ import {
   lookupPaper,
   openLink,
   patchPapers,
-  addTag,
   addToCategory,
   removeFromCategory,
   removeTag,
@@ -71,9 +69,7 @@ import {
   categoryLeaf,
   categoryTree,
   flattenCategories,
-  hasTag,
   paperCategories,
-  paperTags,
   togglePinned,
 } from "./model";
 import { usePaperUI } from "./state";
@@ -163,7 +159,6 @@ export function PaperDetail({
   const prefs = useReaderStore((s) => s.libraryPreferences.papers) || {};
   const papers = all.filter((d) => d.library === "papers");
   const categories = paperCategories(prefs, papers);
-  const tags = paperTags(papers);
   const [abstractOpen, setAbstractOpen] = useState(false);
   const [editingAbstract, setEditingAbstract] = useState(false);
   const [lookingUp, setLookingUp] = useState(false);
@@ -304,7 +299,7 @@ export function PaperDetail({
           </dd>
           <dt>标签</dt>
           <dd>
-            <TagChips doc={doc} tags={tags} />
+            <TagChips doc={doc} onAdd={() => actions.newTag([doc])} />
           </dd>
         </dl>
         <div className="paper-fields-heading">
@@ -573,7 +568,7 @@ function FolderChips({
   const inside = (name: string) =>
     doc.folders.some((f) => f.toLowerCase() === name.toLowerCase());
   return (
-    <div className="paper-chips" aria-label="分类">
+    <div className="paper-chips paper-folder-chips" aria-label="分类">
       {doc.folders.map((folder) => (
         <Chip
           key={folder}
@@ -627,71 +622,37 @@ function FolderChips({
 }
 
 /** The paper's tags; click one to list every paper carrying it. */
-function TagChips({ doc, tags }: { doc: Document; tags: string[] }) {
+export function TagChips({
+  doc,
+  onAdd,
+  onSelect,
+}: {
+  doc: Document;
+  onAdd: () => void;
+  onSelect?: (tag: string) => void;
+}) {
   const setView = usePaperUI((s) => s.setView);
-  const [adding, setAdding] = useState(false);
-  const add = (text: string) => {
-    setAdding(false);
-    const tag = text.trim().replace(/^#/, "");
-    if (tag) void addTag([doc], tag);
-  };
-  const unused = tags.filter((tag) => !hasTag(doc, tag));
   return (
     <div className="paper-chips paper-tag-chips" aria-label="标签">
       {doc.tags.map((tag) => (
         <Chip
           key={tag}
           label={`#${tag}`}
-          title={`查看带 #${tag} 的论文`}
+          title={`查看带 #${tag} 的${doc.library === "books" ? "图书" : "论文"}`}
           removeLabel={`删除标签 ${tag}`}
-          onClick={() => setView(`tag:${tag}`)}
+          onClick={() => (onSelect ? onSelect(tag) : setView(`tag:${tag}`))}
           onRemove={() => void removeTag([doc], tag)}
         />
       ))}
-      {adding ? (
-        <Input
-          autoFocus
-          maxLength={40}
-          aria-label="添加标签"
-          placeholder="标签名"
-          className="paper-chip-input"
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.nativeEvent.isComposing) {
-              e.preventDefault();
-              add(e.currentTarget.value);
-            }
-            if (e.key === "Escape") setAdding(false);
-          }}
-          onBlur={(e) => add(e.currentTarget.value)}
-        />
-      ) : (
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="rounded-full"
-                aria-label="添加标签"
-              />
-            }
-          >
-            <Plus />
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="max-h-80 w-48">
-            {unused.map((tag) => (
-              <DropdownMenuItem key={tag} onClick={() => add(tag)}>
-                <span className="truncate">#{tag}</span>
-              </DropdownMenuItem>
-            ))}
-            {unused.length > 0 && <DropdownMenuSeparator />}
-            <DropdownMenuItem onClick={() => setAdding(true)}>
-              <Tag />
-              新标签…
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+      <Button
+        size="icon-xs"
+        variant="ghost"
+        className="rounded-full"
+        aria-label="添加标签"
+        onClick={onAdd}
+      >
+        <Plus />
+      </Button>
     </div>
   );
 }

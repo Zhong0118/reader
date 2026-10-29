@@ -1,4 +1,5 @@
 // Fill only pages missing from NeoRead's existing parsed original text.
+// --outline reads only the bookmarks, which bound background book parsing.
 import { DOMMatrix, ImageData, Path2D } from "@napi-rs/canvas";
 import { readFile, writeFile } from "node:fs/promises";
 import { parseArgs } from "node:util";
@@ -11,6 +12,7 @@ const { values } = parseArgs({
     input: { type: "string" },
     output: { type: "string" },
     pages: { type: "string" },
+    outline: { type: "boolean" },
   },
 });
 if (!values.input || !values.output)
@@ -43,15 +45,18 @@ try {
     throw new Error("Invalid missing-page range");
   const pages = [];
   for (let number = 1; number <= pdf.numPages; number++) {
-    if (selected && !selected.has(number)) continue;
+    if (values.outline || (selected && !selected.has(number))) continue;
     const page = await pdf.getPage(number);
     const spans = await extractTextSpans(page);
     // Keep extraction order and geometry; do not invent semantic layout.
     pages.push({ page: number, spans });
     page.cleanup();
   }
-  const outline: { title: string; page: number }[] = [];
-  const walk = async (items: Awaited<ReturnType<typeof pdf.getOutline>>) => {
+  const outline: { title: string; page: number; depth: number }[] = [];
+  const walk = async (
+    items: Awaited<ReturnType<typeof pdf.getOutline>>,
+    depth = 0,
+  ) => {
     for (const item of items || []) {
       try {
         const dest =
@@ -63,12 +68,12 @@ try {
             typeof dest[0] === "number"
               ? dest[0]
               : await pdf.getPageIndex(dest[0]);
-          outline.push({ title: item.title, page: index + 1 });
+          outline.push({ title: item.title, page: index + 1, depth });
         }
       } catch {
         /* An invalid bookmark must not discard extracted text. */
       }
-      await walk(item.items);
+      await walk(item.items, depth + 1);
     }
   };
   await walk(await pdf.getOutline());

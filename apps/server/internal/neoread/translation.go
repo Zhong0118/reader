@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -64,7 +65,7 @@ func (s *Server) visibleTranslations(documentID string, m translationInput) ([]T
 	return s.translationRecords(documentID, m, true)
 }
 
-func (s *Server) translationRecords(documentID string, m translationInput, visible bool) ([]TranslationBlock, error) {
+func (s *Server) translationRecords(documentID string, m translationInput, visible bool, scoped ...bool) ([]TranslationBlock, error) {
 	d, err := s.Store.Document(documentID)
 	if err != nil {
 		return nil, err
@@ -74,7 +75,26 @@ func (s *Server) translationRecords(documentID string, m translationInput, visib
 		query = `SELECT COALESCE(previous.body,t.body) FROM translations t LEFT JOIN translation_previous previous
 ON previous.document_id=t.document_id AND previous.block_id=t.block_id AND previous.source_hash=t.source_hash WHERE t.document_id=?`
 	}
-	rows, err := s.Store.DB.Query(query, documentID)
+	args := []any{documentID}
+	// Chapter-scoped subscriptions must not decode the entire book's saved prose.
+	if len(scoped) > 0 && scoped[0] {
+		items := m.translationItems()
+		if len(items) == 0 {
+			return []TranslationBlock{}, nil
+		}
+		query += " AND "
+		if visible {
+			query += "t."
+		}
+		query += "block_id IN (SELECT value FROM json_each(?))"
+		ids := make([]string, len(items))
+		for i, item := range items {
+			ids[i] = item.BlockID
+		}
+		encoded, _ := json.Marshal(ids)
+		args = append(args, string(encoded))
+	}
+	rows, err := s.Store.DB.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +150,11 @@ func (s *Server) retryFailedTranslations(documentID string) error {
 	return nil
 }
 
-func (s *Server) saveTranslation(documentID string, t TranslationBlock) error {
+func (s *Server) saveTranslation(documentID string, t TranslationBlock, source ...translationInput) error {
+	if t.Status == "complete" {
+		s.annotationMu.Lock()
+		defer s.annotationMu.Unlock()
+	}
 	s.translationMu.Lock()
 	defer s.translationMu.Unlock()
 	body, err := json.Marshal(t)
@@ -142,6 +166,13 @@ func (s *Server) saveTranslation(documentID string, t TranslationBlock) error {
 		return err
 	}
 	defer tx.Rollback()
+	changed := 0
+	if t.Status == "complete" {
+		changed, err = reconcileRetranslatedAnnotations(tx, documentID, t, source...)
+		if err != nil {
+			return err
+		}
+	}
 	if _, err = tx.Exec(`INSERT INTO translations(document_id,block_id,source_hash,status,body) VALUES(?,?,?,?,?) ON CONFLICT(document_id,block_id,source_hash) DO UPDATE SET status=excluded.status,body=excluded.body`, documentID, t.BlockID, t.SourceHash, t.Status, string(body)); err != nil {
 		return err
 	}
@@ -165,6 +196,10 @@ func (s *Server) saveTranslation(documentID string, t TranslationBlock) error {
 	}
 	if err = tx.Commit(); err != nil {
 		return err
+	}
+	if changed > 0 {
+		s.publishAnnotationChange(documentID)
+		s.diagnosticEvent(slog.LevelInfo, "annotation.retranslation.reconcile", "documentId", documentID, "count", changed)
 	}
 	s.publishTranslation(documentID, visible)
 	return nil

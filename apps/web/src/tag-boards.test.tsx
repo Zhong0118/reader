@@ -52,7 +52,7 @@ async function render() {
         processingError=""
         openDocument={() => {}}
         favorite={() => {}}
-        onEdit={() => {}}
+
         onSettings={() => {}}
         onOverview={() => {}}
         onUsage={() => {}}

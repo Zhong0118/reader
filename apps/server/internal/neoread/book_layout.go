@@ -25,7 +25,7 @@ type PageRange struct {
 }
 
 // runLayout parses the PDF into work. from and to bound a book chapter; zero
-// parses the whole document.
+// parses the whole document. A nil p runs without reporting page progress.
 func (s *Server) runLayout(ctx context.Context, d Document, work string, from, to int, p *Processing) (result error) {
 	runID := id()
 	started := time.Now()
@@ -42,6 +42,7 @@ func (s *Server) runLayout(ctx context.Context, d Document, work string, from, t
 		}
 		s.diagnosticEvent(level, "pdf.parse.finish", "runId", runID, "documentId", d.ID,
 			"stage", lastStage, "outcome", outcome, "exitCode", exitCode,
+			"fromPage", from, "toPage", to,
 			"exitCodeHex", layoutExitHex(exitCode), "nativeDiagnostics", stderr.nativeCodes(), "nativeTrace", stderr.nativeTrace(),
 			"durationMs", time.Since(started).Milliseconds(), "stderrBytes", stderr.total,
 			"stderrFingerprint", stderr.fingerprint(), "stderrTruncated", stderr.total > int64(len(stderr.tail)),
@@ -105,6 +106,9 @@ func (s *Server) runLayout(ctx context.Context, d Document, work string, from, t
 				"totalMemoryBytes", event.TotalMemoryBytes)
 			continue
 		case "page":
+			if p == nil {
+				continue
+			}
 			p.PagesDone, p.PagesTotal = event.Page, event.Total
 			p.Detail = fmt.Sprintf("已解析 %d / %d 页", event.Page, event.Total)
 			if from > 0 {
@@ -195,6 +199,14 @@ func (s *Server) learnBookChapter(ctx context.Context, d Document, p *Processing
 		}
 	}
 	if start, end, ok := chapterWindow(known, items, p.Chapter.From, p.Chapter.To); ok {
+		// The requested chapter goes ahead of background book parsing.
+		s.interruptBookLayout(d.ID)
+		lock := s.bookLayoutLock(d.ID)
+		lock.Lock()
+		defer lock.Unlock()
+		if m, err := s.readLayout(d.ID); err == nil {
+			known = &m
+		}
 		for missing := unparsedPages(known, start, end); len(missing) > 0; missing = unparsedPages(known, start, end) {
 			if err := ctx.Err(); err != nil {
 				return err

@@ -49,7 +49,8 @@ vi.mock("./LibraryDocuments", () => ({
   ),
 }));
 vi.mock("./BookDetail", () => ({
-  ResizableBookDetail: () => (
+  saveBookDetailWidth: vi.fn(),
+  BookDetail: () => (
     <aside className="book-detail">
       <p>详情</p>
     </aside>
@@ -58,6 +59,7 @@ vi.mock("./BookDetail", () => ({
 vi.mock("./DocumentManagement", () => ({
   DocumentEditor: () => null,
   LibraryFilterBar: () => null,
+  LibraryTagFilters: () => null,
 }));
 vi.mock("./LargePaperDialog", () => ({
   LargePaperConfirmation: () => null,

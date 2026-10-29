@@ -276,7 +276,10 @@ export class PDFBlockOverlay {
     if (this.active !== block) {
       this.active = block;
       this.root.render(
-        createElement(BlockActions, { block, onAction: this.onAction }),
+        createElement(BlockActions<PDFBlock>, {
+          block,
+          onAction: this.onAction,
+        }),
       );
     }
     const b = block.bounds;

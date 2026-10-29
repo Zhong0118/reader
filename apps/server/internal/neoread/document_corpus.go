@@ -376,10 +376,7 @@ func (s *Server) pdfCorpus(ctx context.Context, d Document, c *documentCorpus) e
 		}
 	}
 	needsExtraction := layoutErr != nil || len(missingPages) > 0
-	worker := os.Getenv("NEOREAD_CORPUS_PROCESSOR")
-	if worker == "" && os.Getenv("NEOREAD_PROCESSOR") != "" {
-		worker = filepath.Join(filepath.Dir(os.Getenv("NEOREAD_PROCESSOR")), "corpus.mjs")
-	}
+	worker := corpusProcessor()
 	node := os.Getenv("NEOREAD_NODE")
 	if needsExtraction && worker != "" && node != "" {
 		work, err := os.MkdirTemp(filepath.Join(s.Store.Root, "ai-work"), "corpus-")

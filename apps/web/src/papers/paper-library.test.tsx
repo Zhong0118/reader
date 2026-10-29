@@ -6,6 +6,7 @@ import { api } from "@neoread/api";
 import type { Document, Processing } from "@neoread/core";
 import { useReaderStore } from "../store";
 import { PaperLibrary } from "./PaperLibrary";
+import { doubleClickWindow } from "../DetailSheet";
 import { PaperSidebar } from "./PaperSidebar";
 import { usePaperUI } from "./state";
 import { useAttachments } from "./attachments";
@@ -63,6 +64,7 @@ const docs: Document[] = [
 let root: Root, host: HTMLDivElement;
 const open = vi.fn();
 let jobs = new Map<string, Processing>();
+const openMany = vi.fn();
 function Harness({ navOpen = true }: { navOpen?: boolean } = {}) {
   const documents = useReaderStore((s) => s.documents);
   return (
@@ -82,6 +84,7 @@ function Harness({ navOpen = true }: { navOpen?: boolean } = {}) {
         jobs={jobs}
         loading={false}
         openDocument={open}
+        openDocuments={openMany}
         moveToBooks={() => {}}
         navOpen={navOpen}
         onToggleNav={() => {}}
@@ -448,33 +451,60 @@ it("offers existing tags when adding one from the detail panel", async () => {
     }),
   );
   await act(async () => row("Graph Attention Networks").click());
+  await waitOutDoubleClick();
   const detail = host.querySelector(".paper-detail")!;
   await act(async () =>
     detail
       .querySelector<HTMLButtonElement>('button[aria-label="添加标签"]')!
       .click(),
   );
-  await act(async () => menuItem("#Transformer").click());
+  const dialog = document.querySelector('[role="dialog"]:not(.detail-sheet)')!;
+  const suggestion = [
+    ...dialog.querySelectorAll<HTMLButtonElement>("button"),
+  ].find((b) => b.textContent === "#Transformer")!;
+  await act(async () => suggestion.click());
+  expect(api.update).not.toHaveBeenCalled();
+  await act(async () =>
+    dialog
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
+  );
   expect(api.update).toHaveBeenLastCalledWith("b", { tags: ["Transformer"] });
 });
 
 it("tags a paper and collects it in a smart tag category", async () => {
   await act(async () => row("Graph Attention Networks").click());
+  await waitOutDoubleClick();
   const detail = host.querySelector(".paper-detail")!;
   await act(async () =>
     detail
       .querySelector<HTMLButtonElement>('button[aria-label="添加标签"]')!
       .click(),
   );
-  await act(async () => menuItem("新标签…").click());
-  const input = detail.querySelector<HTMLInputElement>(
-    'input[aria-label="添加标签"]',
+  const dialog = document.querySelector('[role="dialog"]:not(.detail-sheet)')!;
+  const input = dialog.querySelector<HTMLInputElement>(
+    'input[aria-label="标签名"]',
   )!;
-  input.value = "#GNN";
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(
+      HTMLInputElement.prototype,
+      "value",
+    )!.set!.call(input, "#GNN");
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // Moving focus to the explicit submit button must not dismiss or save the editor.
   await act(async () =>
-    input.dispatchEvent(
-      new KeyboardEvent("keydown", { key: "Enter", bubbles: true }),
-    ),
+    dialog.querySelector<HTMLButtonElement>('button[type="submit"]')!.focus(),
+  );
+  expect(document.querySelector('[role="dialog"]:not(.detail-sheet)')).toBe(
+    dialog,
+  );
+  expect(input.value).toBe("#GNN");
+  expect(api.update).not.toHaveBeenCalled();
+  await act(async () =>
+    dialog
+      .querySelector("form")!
+      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })),
   );
   expect(api.update).toHaveBeenLastCalledWith("b", { tags: ["GNN"] });
   await act(async () =>
@@ -544,6 +574,9 @@ const press = (target: Element, type: string, clientX = 0) =>
       new MouseEvent(type, { bubbles: true, button: 0, clientX }),
     );
   });
+const waitOutDoubleClick = () =>
+  act(() => new Promise((done) => setTimeout(done, doubleClickWindow + 20)));
+
 const fakeWidths = (widths: Record<string, number>) =>
   vi
     .spyOn(Element.prototype, "getBoundingClientRect")
@@ -556,7 +589,7 @@ const fakeWidths = (widths: Record<string, number>) =>
       }
       const key =
         (this as HTMLElement).dataset?.column ??
-        (this.classList.contains("paper-detail")
+        (this.classList.contains("detail-sheet")
           ? "detail"
           : this.getAttribute("aria-hidden") === "true"
             ? "filler"
@@ -581,8 +614,8 @@ it("drags the detail panel edge and saves the width once released", async () => 
   )!;
   await press(edge, "pointerdown", 600);
   await press(edge, "pointermove", 500);
-  const body = host.querySelector<HTMLElement>(".paper-library-body")!;
-  expect(body.style.getPropertyValue("--paper-detail-width")).toBe("460px");
+  const sheet = host.querySelector<HTMLElement>(".detail-sheet")!;
+  expect(sheet.style.getPropertyValue("--paper-detail-width")).toBe("460px");
   expect(prefs().detailWidth).toBeUndefined();
   await press(edge, "pointerup", 500);
   expect(prefs().detailWidth).toBe(460);
@@ -1612,6 +1645,7 @@ it("expands child attachments in both list and table without adding paper select
     '[data-attachment-row="supp"]',
   )!;
   await act(async () => child.click());
+  await waitOutDoubleClick();
   expect(host.querySelector('[aria-label="附件详情"]')?.textContent).toContain(
     "supplement.pdf",
   );
@@ -1704,11 +1738,15 @@ it("opens attachment rename and removal from the child context menu", async () =
     );
   await context();
   await act(async () => menuItem("重命名").click());
-  expect(document.querySelector('[role="dialog"]')?.textContent).toContain(
-    "重命名附件",
-  );
+  expect(
+    document.querySelector('[role="dialog"]:not(.detail-sheet)')?.textContent,
+  ).toContain("重命名附件");
   await act(async () =>
-    [...document.querySelectorAll<HTMLButtonElement>('[role="dialog"] button')]
+    [
+      ...document.querySelectorAll<HTMLButtonElement>(
+        '[role="dialog"]:not(.detail-sheet) button',
+      ),
+    ]
       .find((b) => b.textContent === "取消")!
       .click(),
   );
@@ -2284,4 +2322,21 @@ it("fits saved narrow widths to the complete header without overwriting preferen
   } finally {
     rects.mockRestore();
   }
+});
+
+it("opens picked papers together in document tabs and exits batch mode", async () => {
+  await act(async () =>
+    usePaperUI.getState().startPicking(docs.slice(0, 2).map((doc) => doc.id)),
+  );
+  await act(async () => button("在标签页中打开").click());
+  expect(openMany).toHaveBeenCalledOnce();
+  expect(
+    openMany.mock.calls[0][0].map((doc: Document) => doc.id).sort(),
+  ).toEqual(
+    docs
+      .slice(0, 2)
+      .map((doc) => doc.id)
+      .sort(),
+  );
+  expect(usePaperUI.getState().picking).toBe(false);
 });

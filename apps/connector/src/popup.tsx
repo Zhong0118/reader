@@ -37,7 +37,7 @@ function App() {
           const session = await fetch(bridge + "/v1/session", {
             method: "POST",
           });
-          if (!session.ok) throw Error("无法连接 NeoRead / Reader");
+          if (!session.ok) throw Error("无法连接 NeoRead");
           credential = (await session.json()).secret;
           await chrome.storage.local.set({ secret: credential });
           response = await fetch(bridge + "/v1/labels", {
@@ -45,7 +45,7 @@ function App() {
           });
         }
         if (response.status === 404) throw Error(outdatedAppMessage);
-        if (!response.ok) throw Error("无法读取 NeoRead / Reader 论文库");
+        if (!response.ok) throw Error("无法读取 NeoRead 论文库");
         const labels = (await response.json()) as {
           folders: string[];
           tags: string[];
@@ -57,7 +57,7 @@ function App() {
         setMessage(
           error instanceof Error && error.message === outdatedAppMessage
             ? error.message
-            : "请先打开 NeoRead / Reader 桌面应用",
+            : "请先打开 NeoRead 桌面应用",
         );
         setMessageTone("error");
       }
@@ -233,7 +233,7 @@ function App() {
       <main>
         <h1>NeoRead Connector</h1>
         {!secret ? (
-          <p>正在连接本机 NeoRead / Reader…</p>
+          <p>正在连接本机 NeoRead…</p>
         ) : (
           <>
             <p>
@@ -309,7 +309,7 @@ function App() {
           >
             {busy
               ? "正在处理…"
-              : `收录 ${selected.length} 篇到 NeoRead / Reader`}
+              : `收录 ${selected.length} 篇到 NeoRead`}
           </button>
         </div>
       )}

@@ -3,6 +3,7 @@ import { useTranslations } from "./useTranslations";
 import { readerLayout, updateReaderLayout } from "../neoread-layout";
 import {
   useEffect,
+  useLayoutEffect,
   useRef,
   useState,
   type ComponentProps,
@@ -32,6 +33,7 @@ import {
 } from "./annotations";
 import { installTranslationSelectionHighlight } from "./selection-highlight";
 import { epubBlocksAt } from "./epub-links";
+import { animatePDFScroll } from "../readers/pdf-scroll";
 import { isSelectionToolbar } from "../readers/selection-anchor";
 import { defaultTheme } from "@neoread/core";
 import { translationFont } from "../appearance";
@@ -40,6 +42,7 @@ import "./translation.css";
 type Mode = "source" | "parallel" | "translation";
 export function EPUBReadingView({
   document: doc,
+  active = true,
   theme,
   annotations,
   events,
@@ -55,12 +58,16 @@ export function EPUBReadingView({
   const [mode, setMode] = useState<Mode>("source");
   const { swapped, sourceWidth } = readerLayout(theme.readerLayout);
   const [blocks, setBlocks] = useState<EPUBReadingBlock[]>([]);
-  const { translations, error: streamError } = useTranslations(doc.id);
   const [chapter, setChapter] = useState(
-    doc.progress?.type === "epub" ? doc.progress.href : "",
+    doc.progress?.type === "epub" ? doc.progress.href.split("#")[0] : "",
   );
-  const [error, setError] = useState("");
+  const { translations, error: streamError } = useTranslations(doc.id, [
+    ...new Set(blocks.map((b) => b.location.href)),
+  ]);
   const pane = useRef<HTMLDivElement>(null);
+  const viewportAnchor = useRef<{ id: string; top: number } | undefined>(
+    undefined,
+  );
   const engine = useRef<ReaderAdapter | undefined>(undefined);
   const selection = useRef<ReaderSelection | null>(null);
   const position = useRef<EPUBLocation>(
@@ -73,6 +80,12 @@ export function EPUBReadingView({
   const scrollFrame = useRef(0);
   const modeFrame = useRef(0);
   const dragging = useRef(false);
+  const [hoveredBlock, setHoveredBlock] = useState<string>();
+  const [focusedBlock, setFocusedBlock] = useState<string>();
+  const hoverOwner = useRef<"source" | "translation" | undefined>(undefined);
+  const pressedBlock = useRef<{ id: string; x: number; y: number }>(undefined);
+  // An explicit block focus owns both panes until its motion settles.
+  const focusMotion = useRef({ operation: 0, moving: false });
   const live = useRef({
     mode,
     blocks,
@@ -106,14 +119,99 @@ export function EPUBReadingView({
       }
     }
   };
+  const hover = (origin: "source" | "translation", blockId?: string) => {
+    if (!blockId && hoverOwner.current !== origin) return;
+    hoverOwner.current = blockId ? origin : undefined;
+    setHoveredBlock(blockId);
+    engine.current?.hoverBlock?.(
+      live.current.mode === "parallel" && origin === "translation"
+        ? (blockId ?? null)
+        : null,
+    );
+  };
+  const centerTranslation = (id: string, cancelled: () => boolean) => {
+    const node = targetNode(id),
+      host = pane.current;
+    if (!node || !host) return;
+    const r = node.getBoundingClientRect(),
+      v = host.getBoundingClientRect();
+    return animatePDFScroll(
+      host,
+      host.scrollLeft,
+      host.scrollTop + r.top - v.top - Math.max(0, (v.height - r.height) / 2),
+      () => cancelled() || pane.current !== host,
+      () => {},
+    );
+  };
+  // Clicking a paragraph on either side centers it in every visible pane, as
+  // PDF blocks do; the box fades once both panes arrive.
+  const focusBlock = (id: string, origin: "source" | "translation") => {
+    const block = live.current.blocks.find((b) => b.id === id);
+    if (!block) return;
+    side.current = origin;
+    syncTarget.current = undefined;
+    pendingFollow.current = undefined;
+    const motion = focusMotion.current;
+    const operation = ++motion.operation;
+    motion.moving = true;
+    setFocusedBlock(id);
+    updateLocation(block.location);
+    const current = live.current.mode;
+    const cancelled = () => operation !== motion.operation;
+    void Promise.all([
+      current !== "translation"
+        ? engine.current?.focusBlock?.(
+            id,
+            current === "parallel" ? "parallel" : "source",
+          )
+        : undefined,
+      current !== "source" ? centerTranslation(id, cancelled) : undefined,
+    ])
+      .catch((e) => toast.error((e as Error).message))
+      .finally(() => {
+        if (cancelled()) return;
+        setFocusedBlock(undefined);
+        // Let the last programmatic scroll event pass before syncing resumes.
+        requestAnimationFrame(() => {
+          if (!cancelled()) motion.moving = false;
+        });
+      });
+  };
+  const cancelFocus = () => {
+    const motion = focusMotion.current;
+    if (!motion.moving) return;
+    motion.operation++;
+    motion.moving = false;
+    setFocusedBlock(undefined);
+    engine.current?.cancelBlockFocus?.();
+  };
   const updateLocation = (location: EPUBLocation) => {
     position.current = location;
     setChapter(location.href.split("#")[0]);
-    const all = live.current.blocks;
-    const block = epubBlocksAt(location, all)[0];
+    const chapters = engine.current?.getEPUBChapters?.() ?? [];
+    const index = chapters.findIndex(
+      (c) => c.href === location.href.split("#")[0],
+    );
+    const current = live.current.blocks.filter(
+      (b) => b.location.href === location.href.split("#")[0],
+    );
+    const block = epubBlocksAt(location, current)[0];
+    const progress =
+      location.progression ??
+      (block ? current.indexOf(block) / Math.max(1, current.length) : 0);
+    const weight = (c: (typeof chapters)[number]) => Math.max(1, c.characters);
+    const preceding = chapters
+      .slice(0, Math.max(0, index))
+      .reduce((n, c) => n + weight(c), 0);
+    const total = chapters.reduce((n, c) => n + weight(c), 0);
     live.current.events.location(
       location,
-      block ? all.indexOf(block) / Math.max(1, all.length) : 0,
+      Math.min(
+        1,
+        (preceding +
+          progress * (chapters[index] ? weight(chapters[index]) : 1)) /
+          Math.max(1, total),
+      ),
     );
   };
   const go = async (location: DocumentLocation) => {
@@ -121,10 +219,8 @@ export function EPUBReadingView({
     clear();
     side.current =
       live.current.mode === "translation" ? "translation" : "source";
-    const navigateSource =
-      live.current.mode !== "translation" || location.href.includes("#");
-    if (navigateSource) await engine.current?.goTo(location);
-    const resolved = navigateSource ? engine.current?.getLocation() : undefined;
+    await engine.current?.goTo(location);
+    const resolved = engine.current?.getLocation();
     if (
       resolved?.type === "epub" &&
       resolved.href === location.href.split("#")[0] &&
@@ -144,10 +240,9 @@ export function EPUBReadingView({
         ? engine.current?.next()
         : engine.current?.previous();
     }
-    const order = [...new Set(live.current.blocks.map((b) => b.location.href))];
+    const order = engine.current?.getEPUBChapters?.().map((c) => c.href) ?? [];
     const href = order[order.indexOf(live.current.chapter) + direction];
-    const block = live.current.blocks.find((b) => b.location.href === href);
-    if (block) await go(block.location);
+    if (href) await go({ type: "epub", href });
   };
   const clear = () => {
     syncTarget.current = undefined;
@@ -179,29 +274,19 @@ export function EPUBReadingView({
     }
   };
   useEffect(() => {
-    const controller = new AbortController();
-    void api
-      .epubBlocks(doc.id)
-      .then((items) => {
-        if (controller.signal.aborted) return;
-        setBlocks(items);
-        engine.current?.setEPUBBlocks?.(items);
-        setChapter((current) =>
-          items.some((b) => b.location.href === current)
-            ? current
-            : (items[0]?.location.href ?? ""),
-        );
-      })
-      .catch((e) => {
-        if (!controller.signal.aborted) setError(e.message);
-      });
     return () => {
-      controller.abort();
       syncTarget.current = undefined;
       cancelAnimationFrame(scrollFrame.current);
       cancelAnimationFrame(modeFrame.current);
     };
   }, [doc.id]);
+  useLayoutEffect(() => {
+    const anchor = viewportAnchor.current;
+    viewportAnchor.current = undefined;
+    const node = anchor && targetNode(anchor.id);
+    if (node && pane.current)
+      pane.current.scrollTop += node.getBoundingClientRect().top - anchor.top;
+  }, [blocks]);
   useEffect(() => {
     if (pendingFollow.current) follow(pendingFollow.current);
   }, [chapter, blocks, mode]);
@@ -286,6 +371,7 @@ export function EPUBReadingView({
     cancelAnimationFrame(scrollFrame.current);
     scrollFrame.current = requestAnimationFrame(() => {
       if (
+        focusMotion.current.moving ||
         side.current !== "translation" ||
         dragging.current ||
         selection.current ||
@@ -302,6 +388,13 @@ export function EPUBReadingView({
         (b) => b.id === node?.dataset.translationBlock,
       );
       if (block) {
+        if (
+          live.current.mode === "translation" &&
+          block.location.href !== live.current.chapter
+        )
+          void engine.current
+            ?.goTo(block.location)
+            .catch((e) => toast.error(e.message));
         updateLocation(block.location);
         void syncSource(block.location);
       }
@@ -309,6 +402,9 @@ export function EPUBReadingView({
   };
   const changeMode = (value: Mode) => {
     clear();
+    cancelFocus();
+    hover("source");
+    hover("translation");
     setMode(value);
     side.current = value === "translation" ? "translation" : "source";
     const target = position.current;
@@ -318,7 +414,7 @@ export function EPUBReadingView({
         const block = epubBlocksAt(target, live.current.blocks)[0];
         if (block) follow(block.id);
       }
-      if (value !== "translation" && target.href)
+      if (target.href)
         void engine.current?.goTo(target).catch((e) => toast.error(e.message));
     });
   };
@@ -356,6 +452,7 @@ export function EPUBReadingView({
         source={
           <div className="translation-source">
             <ReaderView
+              active={active}
               document={doc}
               theme={theme}
               annotations={annotations}
@@ -366,7 +463,6 @@ export function EPUBReadingView({
                   position.current = initial;
                   setChapter(initial.href.split("#")[0]);
                 }
-                adapter.setEPUBBlocks?.(live.current.blocks);
                 const overrides: Partial<ReaderAdapter> = {
                   goTo: go,
                   next: () => step(1),
@@ -401,6 +497,21 @@ export function EPUBReadingView({
               }}
               events={{
                 ...events,
+                epubBlocksChanged: (items) => {
+                  const top = pane.current?.getBoundingClientRect().top ?? 0;
+                  const node = Array.from(
+                    pane.current?.querySelectorAll<HTMLElement>(
+                      "[data-translation-block]",
+                    ) ?? [],
+                  ).find((n) => n.getBoundingClientRect().bottom > top);
+                  if (node)
+                    viewportAnchor.current = {
+                      id: node.dataset.translationBlock!,
+                      top: node.getBoundingClientRect().top,
+                    };
+                  live.current.blocks = items;
+                  setBlocks(items);
+                },
                 epubInteraction: () => {
                   side.current = "source";
                   syncTarget.current = undefined;
@@ -418,11 +529,17 @@ export function EPUBReadingView({
                   )
                     return;
                   position.current = location;
-                  setChapter(location.href);
+                  setChapter(location.href.split("#")[0]);
                   live.current.events.location(location, percent);
                 },
+                epubBlockHover: (id) => {
+                  if (live.current.mode === "parallel")
+                    hover("source", id ?? undefined);
+                },
+                epubBlockFocus: (id) => focusBlock(id, "source"),
                 epubReadingAnchor: (id) => {
                   if (
+                    !focusMotion.current.moving &&
                     side.current === "source" &&
                     live.current.mode === "parallel"
                   )
@@ -516,6 +633,7 @@ export function EPUBReadingView({
             onKeyUp={capture}
             onWheel={() => {
               side.current = "translation";
+              cancelFocus();
             }}
             onScroll={scroll}
             onClick={(event) => {
@@ -548,12 +666,11 @@ export function EPUBReadingView({
               );
             }}
           >
-            {(error ||
-              streamError ||
+            {(streamError ||
               processing?.status === "waiting" ||
               processing?.status === "failed") && (
               <div className="translation-warning">
-                {error || streamError || processing?.detail}
+                {streamError || processing?.detail}
                 {processing?.status === "failed" && (
                   <Button
                     size="sm"
@@ -571,18 +688,66 @@ export function EPUBReadingView({
             )}
             {!blocks.length && (
               <p className="translation-warning">
-                {error ||
-                  (processing?.status === "complete"
-                    ? "此书没有可翻译的正文文字"
-                    : "正在读取正文段落…")}
+                {processing?.status === "complete"
+                  ? "此书没有可翻译的正文文字"
+                  : "正在读取正文段落…"}
               </p>
             )}
             {visible.map((block) => (
               <section
                 key={block.id}
                 data-translation-block={block.id}
+                data-block-kind={block.image ? "image" : "text"}
                 data-label={block.label}
                 data-chapter={block.location.href}
+                data-hovered={hoveredBlock === block.id || undefined}
+                data-focused={focusedBlock === block.id || undefined}
+                aria-current={focusedBlock === block.id || undefined}
+                tabIndex={0}
+                onPointerDown={(event) => {
+                  cancelFocus();
+                  pressedBlock.current =
+                    event.button === 0
+                      ? { id: block.id, x: event.clientX, y: event.clientY }
+                      : undefined;
+                }}
+                onClick={(event) => {
+                  const pressed = pressedBlock.current;
+                  pressedBlock.current = undefined;
+                  if (
+                    (event.target as Element).closest(
+                      "a, button, input, textarea, select, [role=button], [contenteditable=true]",
+                    ) ||
+                    window.getSelection()?.toString().trim() ||
+                    (event.detail > 0 &&
+                      (!pressed ||
+                        pressed.id !== block.id ||
+                        Math.hypot(
+                          event.clientX - pressed.x,
+                          event.clientY - pressed.y,
+                        ) > 5))
+                  )
+                    return;
+                  focusBlock(block.id, "translation");
+                }}
+                onKeyDown={(event) => {
+                  if (
+                    event.target === event.currentTarget &&
+                    (event.key === "Enter" || event.key === " ")
+                  ) {
+                    event.preventDefault();
+                    focusBlock(block.id, "translation");
+                  }
+                }}
+                onPointerEnter={(event) => {
+                  if (!event.buttons && !dragging.current)
+                    hover("translation", block.id);
+                }}
+                onPointerMove={(event) => {
+                  if (!event.buttons && !dragging.current)
+                    hover("translation", block.id);
+                }}
+                onPointerLeave={() => hover("translation")}
               >
                 <TranslationText
                   block={block}

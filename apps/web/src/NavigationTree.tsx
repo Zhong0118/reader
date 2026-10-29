@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Bookmark, ChevronRight, SquareCheck, Trash2, X } from "lucide-react";
+import {
+  Bookmark,
+  ChevronRight,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  SquareCheck,
+  Trash2,
+  X,
+} from "lucide-react";
 import { api } from "@neoread/api";
 import type {
   Annotation,
@@ -58,10 +66,13 @@ export function NavigationTree({
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [allCollapsed, setAllCollapsed] = useState(false);
   const lock = useRef(false);
   const alive = useRef(true);
   const [orders, setOrders] = useState<Record<string, number[]>>({});
-  const [ordered, setOrdered] = useState(type === "pdf");
+  const [resolving, setResolving] = useState(false);
+  const orderAbort = useRef<AbortController | undefined>(undefined);
+  const ordersExact = useRef(false);
   const [renaming, setRenaming] = useState<string>();
   const renameInput = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState("");
@@ -97,17 +108,18 @@ export function NavigationTree({
   useEffect(() => {
     if (type !== "epub") return;
     const controller = new AbortController();
-    setOrdered(false);
+    orderAbort.current = controller;
+    ordersExact.current = false;
     void epubNavigationOrders(
       documentId,
       outline,
       annotations,
       controller.signal,
+      false,
     ).then(
       (value) => {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && !ordersExact.current) {
           setOrders(value);
-          setOrdered(true);
         }
       },
       (e) => {
@@ -141,7 +153,16 @@ export function NavigationTree({
             .filter((item) => compareOrder(item.order, currentOrder!) <= 0)
             .at(-1)?.id
         : flat.find(sameSection)?.id;
-  const disabled = !loaded || saving;
+  const disabled = !loaded || saving || resolving;
+  const branches = flat.filter((item) => item.children.length > 0);
+  function toggleAllCollapsed() {
+    const collapsed = !allCollapsed;
+    const entries = { ...state.entries };
+    for (const item of branches)
+      entries[item.id] = { ...entries[item.id], collapsed };
+    setAllCollapsed(collapsed);
+    void save({ ...state, entries });
+  }
   async function change(id: string, patch: NavigationEdit) {
     return save(editNavigation(state, id, patch));
   }
@@ -211,17 +232,36 @@ export function NavigationTree({
       entries[item.id] = { ...entries[item.id], deleted: true };
     if (await save({ ...state, entries })) exitSelection();
   }
-  function move(id: string, parentId: string | null) {
-    if (!ordered) {
-      toast.info("正在确定原文顺序，暂不能调整层级");
-      return;
+  async function move(id: string, parentId: string | null) {
+    if (resolving) return;
+    setResolving(true);
+    const signal = orderAbort.current?.signal;
+    try {
+      const exact =
+        type === "epub"
+          ? await epubNavigationOrders(documentId, outline, annotations, signal)
+          : orders;
+      if (signal?.aborted || !alive.current) return;
+      const preciseTree = buildNavigation(
+        outline,
+        blocks,
+        annotations,
+        state,
+        exact,
+      );
+      const error = moveNavigation(preciseTree, id, parentId);
+      if (error) {
+        toast.error(error);
+        return;
+      }
+      ordersExact.current = true;
+      setOrders(exact);
+      await change(id, { parentId });
+    } catch (e) {
+      if (!signal?.aborted && alive.current) setError((e as Error).message);
+    } finally {
+      if (alive.current) setResolving(false);
     }
-    const error = moveNavigation(tree, id, parentId);
-    if (error) {
-      toast.error(error);
-      return;
-    }
-    void change(id, { parentId });
   }
   function rows(items: NavigationItem[], depth = 0): React.ReactNode {
     return items.map((item) => {
@@ -253,9 +293,7 @@ export function NavigationTree({
                   setRenaming(item.id);
                 }
               }}
-              draggable={
-                !selecting && !readOnly && ordered && renaming !== item.id
-              }
+              draggable={!selecting && !readOnly && renaming !== item.id}
               onDragStart={(event) => {
                 setDragging(item.id);
                 event.dataTransfer.effectAllowed = "move";
@@ -382,13 +420,13 @@ export function NavigationTree({
                 {item.kind === "bookmark" ? "转为目录项" : "转为书签"}
               </ContextMenuItem>
               <ContextMenuItem
-                disabled={readOnly || !ordered || !item.parentId}
+                disabled={readOnly || !item.parentId}
                 onClick={() => move(item.id, promoteTo)}
               >
                 提升一级
               </ContextMenuItem>
               <ContextMenuItem
-                disabled={readOnly || !ordered || flat[0]?.id === item.id}
+                disabled={readOnly || flat[0]?.id === item.id}
                 onClick={() => {
                   const previous = flat
                     .slice(0, flat.indexOf(item))
@@ -419,7 +457,7 @@ export function NavigationTree({
     <nav
       className="navigation-tree"
       aria-label="目录与书签"
-      aria-busy={saving}
+      aria-busy={saving || resolving}
       onKeyDown={(event) => {
         if (event.key === "Escape" && selecting) {
           event.preventDefault();
@@ -452,6 +490,28 @@ export function NavigationTree({
           )}
         </div>
       </ScrollArea>
+      {!selecting && (
+        <div
+          className="navigation-collapse-toolbar"
+          role="group"
+          aria-label="目录展开与折叠"
+        >
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={allCollapsed ? "全部展开" : "全部折叠"}
+            title={allCollapsed ? "全部展开" : "全部折叠"}
+            disabled={disabled || branches.length === 0}
+            onClick={toggleAllCollapsed}
+          >
+            {allCollapsed ? (
+              <ChevronsUpDown className="size-4" />
+            ) : (
+              <ChevronsDownUp className="size-4" />
+            )}
+          </Button>
+        </div>
+      )}
       <div
         className={`navigation-selection-toolbar ${selecting ? "is-selecting" : ""}`}
         role="group"

@@ -8,7 +8,7 @@ it("encodes field updates line by line with escaped text", () => {
       updates: [
         {
           index: 2,
-          code: 'READER_CITATION {"t":"a\\tb"}',
+          code: 'NEOREAD_CITATION {"t":"a\\tb"}',
           text: [{ text: "[1]", sup: true }],
         },
         {
@@ -32,7 +32,7 @@ it("encodes field updates line by line with escaped text", () => {
   ).toEqual([
     "op\tDocument.updateFields",
     "field\t2",
-    'code\tREADER_CITATION {"t":"a\\\\tb"}',
+    'code\tNEOREAD_CITATION {"t":"a\\\\tb"}',
     "text",
     "run\t^\t[1]",
     "end",

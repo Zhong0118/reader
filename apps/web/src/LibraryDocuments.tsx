@@ -4,10 +4,9 @@ import {
   FileText,
   ArrowUpRight,
   Star,
-  Pencil,
+  CheckSquare,
   Trash2,
   Check,
-  ChartColumn,
 } from "lucide-react";
 import type { Document, LibraryMode, Processing } from "@neoread/core";
 import { api } from "@neoread/api";
@@ -20,12 +19,12 @@ import {
   ContextMenuContent,
   ContextMenuItem,
 } from "@neoread/ui/components/context-menu";
-import { DocumentBadges } from "./DocumentManagement";
 import { CoverOverview, useOverviewJobs } from "./DocumentOverview";
 import { CoverProcessing } from "./ProcessingStatus";
 import { toggleDocumentSelection, trashWithUndo } from "./library-actions";
 import { BookCoverImage } from "./book-cover";
 import { BookMenuItems } from "./BookMenu";
+import { useClickIntent } from "./DetailSheet";
 
 export function LibraryDocuments({
   documents,
@@ -33,8 +32,8 @@ export function LibraryDocuments({
   jobs,
   processingError,
   openDocument,
+  openDocuments,
   favorite,
-  onEdit,
   onMove,
   onSettings,
   onOverview,
@@ -49,8 +48,8 @@ export function LibraryDocuments({
   jobs: Processing[];
   processingError: string;
   openDocument: (doc: Document) => void;
+  openDocuments?: (docs: Document[]) => void;
   favorite: (doc: Document) => void;
-  onEdit: (id: string) => void;
   onMove?: (doc: Document, library: LibraryMode) => void;
   onSettings: () => void;
   onOverview: (doc: Document) => void;
@@ -65,6 +64,7 @@ export function LibraryDocuments({
   const overviewJobs = useOverviewJobs();
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState(false);
+  const clickIntent = useClickIntent(activeId);
   const pending = useRef(false);
   const anchor = useRef<string | null>(null);
   const selected = new Set(
@@ -142,8 +142,8 @@ export function LibraryDocuments({
               aria-pressed={selecting}
               onClick={() => changeEditing(!selecting)}
             >
-              {selecting ? <Check /> : <Pencil />}
-              {selecting ? "完成" : "编辑"}
+              {selecting ? <Check /> : <CheckSquare />}
+              {selecting ? "完成" : "批量"}
             </Button>
           )}
           {selecting && (
@@ -163,6 +163,21 @@ export function LibraryDocuments({
               <span className="text-sm text-muted-foreground" role="status">
                 已选 {selected.size} 份
               </span>
+              {openDocuments && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!selected.size}
+                  onClick={() =>
+                    openDocuments(
+                      documents.filter((doc) => selected.has(doc.id)),
+                    )
+                  }
+                >
+                  <BookOpen />
+                  在标签页中打开
+                </Button>
+              )}
               <Button
                 size="sm"
                 variant="destructive"
@@ -184,7 +199,10 @@ export function LibraryDocuments({
               render={<article />}
               className="book-card"
               data-selected={selecting && selected.has(doc.id)}
-              data-active={!selecting && activeId === doc.id}
+              data-active={
+                !selecting &&
+                (activeId === doc.id || clickIntent.pending === doc.id)
+              }
               tabIndex={0}
               aria-label={doc.title}
               onKeyDown={(e) => {
@@ -208,15 +226,23 @@ export function LibraryDocuments({
                   (e.target as Element).closest("[data-document-action]")
                 )
                   return;
-                onActivate(activeId === doc.id ? null : doc.id);
+                // An open sheet switches books at once; otherwise the click
+                // waits out the double-click window before showing it.
+                if (activeId && activeId !== doc.id) onActivate(doc.id);
+                else
+                  clickIntent.defer(doc.id, () =>
+                    onActivate(activeId === doc.id ? null : doc.id),
+                  );
               }}
               onDoubleClick={(e) => {
                 if (
                   !selecting &&
                   onActivate &&
                   !(e.target as Element).closest("[data-document-action]")
-                )
+                ) {
+                  clickIntent.cancel();
                   openDocument(doc);
+                }
               }}
               onClickCapture={(e) => {
                 if (
@@ -289,7 +315,9 @@ export function LibraryDocuments({
                 !jobs.some(
                   (j) =>
                     j.documentId === doc.id &&
-                    (j.status === "running" || j.status === "queued"),
+                    (j.status === "running" ||
+                      j.status === "queued" ||
+                      (!!j.bookLayout && j.bookLayout.status !== "complete")),
                 ) ? (
                   <CoverOverview
                     job={overviewJobs.find((o) => o.documentId === doc.id)!}
@@ -343,35 +371,6 @@ export function LibraryDocuments({
                   />
                 </Button>
               </div>
-              <div className="document-organization">
-                <DocumentBadges document={doc} />
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`查看 ${doc.title} 的用量统计`}
-                  title="用量统计"
-                  data-document-action
-                  onClick={() => onUsage(doc)}
-                >
-                  <ChartColumn />
-                </Button>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label={`编辑 ${doc.title} 的信息`}
-                  data-document-action
-                  title="编辑文档信息"
-                  onClick={() => onEdit(doc.id)}
-                >
-                  <Pencil />
-                </Button>
-              </div>
-              {doc.categorySource !== "manual" &&
-                doc.classificationStatus === "failed" && (
-                  <p className="classification-status">
-                    AI 分类失败 · 可手动修改或重试
-                  </p>
-                )}
               <div className="book-progress">
                 <div
                   style={{
@@ -393,7 +392,6 @@ export function LibraryDocuments({
                 actions={{
                   overview: onOverview,
                   usage: onUsage,
-                  edit: (d) => onEdit(d.id),
                   move: onMove,
                   trash: (d) => void trash([d.id]),
                 }}

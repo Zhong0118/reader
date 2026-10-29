@@ -1,6 +1,6 @@
-// Adds the Reader ribbon to a macro-enabled template saved by Word for Mac:
-//   node apps/cite-plugins/word/add-ribbon.mjs <saved.dotm> [Reader.dotm]
-// Word for Mac cannot import VBA modules by script, so import ReaderCite.bas
+// Adds the NeoRead ribbon to a macro-enabled template saved by Word for Mac:
+//   node apps/cite-plugins/word/add-ribbon.mjs <saved.dotm> [NeoRead.dotm]
+// Word for Mac cannot import VBA modules by script, so import NeoReadCite.bas
 // in the Visual Basic Editor and save the document as a .dotm first.
 // Uses the system zip/unzip (macOS, Linux).
 import { execFileSync } from "node:child_process";
@@ -10,12 +10,12 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const [input, output = join(here, "Reader.dotm")] = process.argv.slice(2);
+const [input, output = join(here, "NeoRead.dotm")] = process.argv.slice(2);
 if (!input) {
-  console.error("usage: node add-ribbon.mjs <saved.dotm> [Reader.dotm]");
+  console.error("usage: node add-ribbon.mjs <saved.dotm> [NeoRead.dotm]");
   process.exit(1);
 }
-const work = mkdtempSync(join(tmpdir(), "reader-dotm-"));
+const work = mkdtempSync(join(tmpdir(), "neoread-dotm-"));
 try {
   execFileSync("unzip", ["-q", resolve(input), "-d", work]);
   const relsPath = join(work, "_rels", ".rels");
@@ -23,7 +23,7 @@ try {
   if (!rels.includes("customUI/customUI14.xml"))
     rels = rels.replace(
       "</Relationships>",
-      '<Relationship Id="readerRibbon" Type="http://schemas.microsoft.com/office/2007/relationships/ui/extensibility" Target="customUI/customUI14.xml"/></Relationships>',
+      '<Relationship Id="neoreadRibbon" Type="http://schemas.microsoft.com/office/2007/relationships/ui/extensibility" Target="customUI/customUI14.xml"/></Relationships>',
     );
   writeFileSync(relsPath, rels);
   cpSync(join(here, "customUI14.xml"), join(work, "customUI", "customUI14.xml"));

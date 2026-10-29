@@ -16,7 +16,7 @@ import (
 )
 
 // Word and WPS citation plugins. A command from the word processor opens a
-// transaction; the Reader window runs the citation session and sends document
+// transaction; the NeoRead window runs the citation session and sends document
 // operations back through the same transaction, one at a time, until it
 // completes it. The server only authenticates and relays: it never parses the
 // operations or the field codes.
@@ -93,6 +93,23 @@ func (s *Server) SetCiteCredential(path string) error {
 		_ = os.Remove(temporary)
 		return err
 	}
+	if filepath.Base(filepath.Dir(path)) == "NeoRead" {
+		legacy := filepath.Join(filepath.Dir(filepath.Dir(path)), "Reader")
+		// Existing installations keep working until the plugins are reinstalled.
+		if info, err := os.Stat(legacy); err == nil && info.IsDir() {
+			if err := os.WriteFile(filepath.Join(legacy, "cite-credential"), []byte(secret), 0o600); err != nil {
+				return err
+			}
+			keyPath := filepath.Join(filepath.Dir(path), "cite-wps-key")
+			if _, err := os.Stat(keyPath); errors.Is(err, os.ErrNotExist) {
+				if key, err := os.ReadFile(filepath.Join(legacy, "cite-wps-key")); err == nil && readerCitationValue.Match(key) {
+					if err := os.WriteFile(keyPath, key, 0o600); err != nil {
+						return err
+					}
+				}
+			}
+		}
+	}
 	s.cite.mu.Lock()
 	s.cite.secret = secret
 	s.cite.bootstrapPath = filepath.Join(filepath.Dir(path), "cite-wps-key")
@@ -153,7 +170,7 @@ func writeCiteOperation(w http.ResponseWriter, op []byte) {
 }
 
 // awaitCiteOperation answers the word processor with the next operation. A
-// dialog in Reader can stay open for minutes, longer than the word processors'
+// dialog in NeoRead can stay open for minutes, longer than the word processors'
 // HTTP clients wait, so an idle request is answered with Document.wait and the
 // client asks again at /v1/cite/next.
 func (s *Server) awaitCiteOperation(w http.ResponseWriter, r *http.Request, t *citeTransaction) {
@@ -176,7 +193,7 @@ func (s *Server) awaitCiteOperation(w http.ResponseWriter, r *http.Request, t *c
 	case op := <-t.ops:
 		writeCiteOperation(w, op)
 	default:
-		respond(w, 200, map[string]any{"op": "Document.complete", "transaction": t.id, "error": "Reader 已取消本次操作"})
+		respond(w, 200, map[string]any{"op": "Document.complete", "transaction": t.id, "error": "NeoRead 已取消本次操作"})
 	}
 }
 
@@ -190,7 +207,7 @@ func (s *Server) citeNext(w http.ResponseWriter, r *http.Request) {
 	}
 	t := s.citeTransaction(v.Transaction)
 	if t == nil {
-		respond(w, 200, map[string]any{"op": "Document.complete", "transaction": v.Transaction, "error": "Reader 已取消本次操作"})
+		respond(w, 200, map[string]any{"op": "Document.complete", "transaction": v.Transaction, "error": "NeoRead 已取消本次操作"})
 		return
 	}
 	s.awaitCiteOperation(w, r, t)
@@ -213,12 +230,12 @@ func (s *Server) citeExecCommand(w http.ResponseWriter, r *http.Request) {
 	if s.cite.current != nil {
 		s.publishCite(citeEvent{Type: "focus"})
 		s.cite.mu.Unlock()
-		fail(w, 409, "Reader 正在处理另一个引用操作")
+		fail(w, 409, "NeoRead 正在处理另一个引用操作")
 		return
 	}
 	if len(s.cite.subscribers) == 0 {
 		s.cite.mu.Unlock()
-		fail(w, 503, "请先打开 Reader 窗口")
+		fail(w, 503, "请先打开 NeoRead 引用窗口")
 		return
 	}
 	t := &citeTransaction{id: id(), ops: make(chan json.RawMessage, 1), results: make(chan citeResult, 1), done: make(chan struct{})}
@@ -253,13 +270,13 @@ func (s *Server) citeRespond(w http.ResponseWriter, r *http.Request) {
 	select {
 	case t.results <- citeResult{value: v.Result, err: v.Error}:
 	default:
-		fail(w, 409, "Reader 没有等待这项结果")
+		fail(w, 409, "NeoRead 没有等待这项结果")
 		return
 	}
 	s.awaitCiteOperation(w, r, t)
 }
 
-// citeEvents tells the Reader window about commands from the word processors.
+// citeEvents tells the NeoRead window about commands from the word processors.
 func (s *Server) citeEvents(w http.ResponseWriter, r *http.Request) {
 	ch := make(chan citeEvent, 16)
 	s.cite.mu.Lock()

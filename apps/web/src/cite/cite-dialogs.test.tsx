@@ -127,6 +127,36 @@ it("reorders papers and keeps that order", async () => {
   expect(citation.properties.unsorted).toBe(true);
 });
 
+it("suppresses authors for all selected papers and papers added afterward", async () => {
+  const engine = await createEngine("apa", "en-US");
+  const done = vi.fn<(citation: Citation | null) => void>();
+  await act(async () =>
+    root.render(
+      <CitationEditor
+        documents={docs}
+        initial={null}
+        engine={engine}
+        before={[]}
+        after={[]}
+        onDone={done}
+      />,
+    ),
+  );
+  await act(async () => option("Older paper").click());
+  const label = [...document.querySelectorAll("label")].find((label) =>
+    label.textContent?.includes("省略作者"),
+  )!;
+  await act(async () => label.click());
+  await act(async () => option("Recent transformer paper").click());
+  expect(
+    document.querySelector('[aria-label="已选论文"]')?.textContent,
+  ).not.toContain("省略作者");
+  await act(async () => button("插入").click());
+  expect(
+    done.mock.calls[0][0]?.citationItems.map((item) => item["suppress-author"]),
+  ).toEqual([true, true]);
+});
+
 it("defaults new documents to GB/T 7714 with automatic updates", async () => {
   const done = vi.fn();
   await act(async () =>

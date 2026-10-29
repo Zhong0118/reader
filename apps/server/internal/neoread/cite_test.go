@@ -16,6 +16,41 @@ import (
 	"neoread.local/server/internal/diagnostics"
 )
 
+func TestNeoReadCitationCredentialCompatibility(t *testing.T) {
+	root := t.TempDir()
+	legacy := filepath.Join(root, "Reader")
+	if err := os.MkdirAll(legacy, 0700); err != nil {
+		t.Fatal(err)
+	}
+	key := strings.Repeat("a", 64)
+	if err := os.WriteFile(filepath.Join(legacy, "cite-wps-key"), []byte(key), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{}
+	target := filepath.Join(root, "NeoRead", "cite-credential")
+	if err := s.SetCiteCredential(target); err != nil {
+		t.Fatal(err)
+	}
+	current, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, err := os.ReadFile(filepath.Join(legacy, "cite-credential"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(old) {
+		t.Fatal("legacy plugin credential differs")
+	}
+	migrated, err := os.ReadFile(filepath.Join(root, "NeoRead", "cite-wps-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(migrated) != key {
+		t.Fatal("WPS installation key changed")
+	}
+}
+
 type citeHarness struct {
 	t         *testing.T
 	server    *Server

@@ -1,13 +1,14 @@
 import type { ReactNode } from "react";
 import { Copy, Expand, Sparkles } from "lucide-react";
 import { Button } from "@neoread/ui/components/button";
-import type { PDFBlock, PDFBlockAction } from "@neoread/core";
-export function BlockActions({
+import type { PDFBlockAction } from "@neoread/core";
+// Shared by PDF layout blocks and EPUB paragraphs.
+export function BlockActions<Block extends { image?: string }>({
   block,
   onAction,
 }: {
-  block: PDFBlock;
-  onAction: (block: PDFBlock, action: PDFBlockAction) => void;
+  block: Block;
+  onAction: (block: Block, action: PDFBlockAction) => void;
 }) {
   const action = (name: PDFBlockAction, label: string, icon: ReactNode) => (
     <Button

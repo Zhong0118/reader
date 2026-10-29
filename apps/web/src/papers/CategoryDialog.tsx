@@ -12,14 +12,18 @@ import {
 /** Names a new category or tag; `count` papers receive it on save. */
 export function CategoryDialog({
   count,
+  itemLabel = "篇论文",
   parent,
   kind = "category",
+  suggestions = [],
   onSave,
   onClose,
 }: {
   count: number;
+  itemLabel?: string;
   parent?: string;
   kind?: "category" | "tag";
+  suggestions?: string[];
   onSave: (name: string) => Promise<boolean>;
   onClose: () => void;
 }) {
@@ -47,13 +51,31 @@ export function CategoryDialog({
               parent && `位于“${parent.replaceAll("/", " / ")}”`,
               count &&
                 (kind === "tag"
-                  ? `加到所选的 ${count} 篇论文`
-                  : `放入所选的 ${count} 篇论文`),
+                  ? `加到所选的 ${count} ${itemLabel}`
+                  : `放入所选的 ${count} ${itemLabel}`),
             ]
               .filter(Boolean)
               .join("，") || `输入${noun}名`}
           </DialogDescription>
         </DialogHeader>
+        {suggestions.length > 0 && (
+          <div
+            className="flex max-h-40 flex-wrap gap-1 overflow-y-auto"
+            aria-label="已有标签"
+          >
+            {suggestions.map((tag) => (
+              <Button
+                key={tag}
+                size="xs"
+                variant="outline"
+                disabled={saving}
+                onClick={() => setName(tag)}
+              >
+                #{tag}
+              </Button>
+            ))}
+          </div>
+        )}
         <form
           className="flex gap-2"
           onSubmit={(e) => {

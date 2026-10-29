@@ -1,7 +1,7 @@
 /**
- * Operations the Reader window sends to the Word and WPS plugins. The plugins
+ * Operations the NeoRead window sends to the Word and WPS plugins. The plugins
  * implement exactly these; everything else (formatting, dialogs, ordering)
- * stays in Reader. Field indexes refer to the order in `Document.getState`.
+ * stays in NeoRead. Field indexes refer to the order in `Document.getState`.
  */
 
 /** A piece of field text with one formatting state. "\t" may appear in text. */
@@ -28,7 +28,7 @@ export type BibliographyFormat = {
 };
 
 export type DocumentField = {
-  /** Field code without "ADDIN", e.g. `READER_CITATION {...}`. */
+  /** Field code without "ADDIN", e.g. `NEOREAD_CITATION {...}`. */
   code: string;
   /** Visible result text as plain text. */
   text: string;
@@ -38,9 +38,9 @@ export type DocumentField = {
 
 export type DocumentState = {
   fields: DocumentField[];
-  /** Index of the Reader field at the selection, or null. */
+  /** Index of the NeoRead field at the selection, or null. */
   cursor: number | null;
-  /** Reader fields that start before the selection. */
+  /** NeoRead fields that start before the selection. */
   fieldsBefore: number;
   /** Stored document preferences, "" when the document has none. */
   data: string;

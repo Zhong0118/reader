@@ -1,6 +1,8 @@
+import { useAnnotationUpdates } from "./useAnnotationUpdates";
 import { webSearchEnabled } from "./chat/web-search";
 import { NavigationTree } from "./NavigationTree";
 import { useShortcut } from "./shortcuts/shortcuts";
+import { registerTabCloseGuard } from "./document-tab-guards";
 import { useDocumentTheme } from "./useDocumentTheme";
 import {
   readerLayout,
@@ -64,6 +66,7 @@ import {
   type Processing,
   type PDFBlock,
   type PDFBlockAction,
+  type EPUBReadingBlock,
   type ImageAttachment,
   type LinkPreview,
   neoreadLink,
@@ -243,12 +246,24 @@ export function Workspace({
   const [location, setLocation] = useState<DocumentLocation | undefined>(
     doc.progress,
   );
+  const lastReadingLocation = useRef(doc.progress);
+  const resumeReading = useRef(false);
+  useEffect(() => {
+    if (!active) {
+      resumeReading.current = true;
+      return;
+    }
+    if (resumeReading.current && adapter && lastReadingLocation.current) {
+      resumeReading.current = false;
+      void adapter
+        .goTo(lastReadingLocation.current)
+        .catch((e) => toast.error(e.message));
+    }
+  }, [active, adapter]);
   const [translationSelection, setTranslationSelection] =
     useState<ReaderSelection | null>(null);
   const [selection, setSelection] = useState<ReaderSelection | null>(null);
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
-  const recoveryDocument = useRef(doc.id);
-  recoveryDocument.current = doc.id;
   const annotationSaving = useRef(false);
   const [noteSaving, setNoteSaving] = useState(false);
   const selectionClipboard = useSelectionClipboard(theme.autoCopySelection);
@@ -482,32 +497,34 @@ export function Workspace({
     setSearchedQuery("");
     setSearching(false);
   }, [doc.id]);
-  useShortcut("readerLeft", () => setLeft(!left));
-  useShortcut("readerRight", () => setRight(!right));
-  useShortcut("search", () => {
-    setLeft(true);
-    setLeftTab("search");
-    requestAnimationFrame(() => searchInput.current?.focus());
-  });
+  useAnnotationUpdates(
+    doc.id,
+    (items) => {
+      setAnnotations(items);
+      setAnnotationsLoaded(true);
+    },
+    () => {
+      setAnnotations([]);
+      setAnnotationsLoaded(false);
+    },
+  );
+  useShortcut("readerLeft", () => setLeft(!left), active);
+  useShortcut("readerRight", () => setRight(!right), active);
+  useShortcut(
+    "search",
+    () => {
+      setLeft(true);
+      setLeftTab("search");
+      requestAnimationFrame(() => searchInput.current?.focus());
+    },
+    active,
+  );
   useEffect(() => {
-    let alive = true;
     session.activate();
     abort.current = null;
     if (currentSession) void session.load();
     setSending(false);
-    api
-      .recoverAnnotations(doc.id)
-      .catch((e) => toast.error(e.message))
-      .then(() => api.annotations(doc.id))
-      .then((a) => {
-        if (alive) {
-          setAnnotations(a);
-          setAnnotationsLoaded(true);
-        }
-      })
-      .catch((e) => toast.error(e.message));
     return () => {
-      alive = false;
       sendSerial.current++;
       abort.current?.abort();
       // A viewer switch must not abort its independently owned run.
@@ -532,6 +549,8 @@ export function Workspace({
     processing?.phase,
     processing?.status,
     processing?.layoutRevision,
+    // Book pages parsed in the background add blocks as they arrive.
+    processing?.bookLayout?.pagesDone,
   ]);
   const move = (next: DocumentLocation) => {
     void adapter?.goTo(next).catch((e) => toast.error(e.message));
@@ -559,6 +578,8 @@ export function Workspace({
         .catch((e) => toast.error(e.message));
   }, [linkTarget, adapter, annotationsLoaded, annotations, doc.id, doc.type]);
   const saveLocation = (next: DocumentLocation, percent: number) => {
+    if (!active) return;
+    lastReadingLocation.current = next;
     setTranslationSelection(null);
     setLocation(next);
     if (navigationRef.current?.settle()) setReturnLocation(undefined);
@@ -625,7 +646,7 @@ export function Workspace({
       adapter?.clearSelection();
       setSelection(null);
     },
-    () => !annotationsLoaded || annotationSaving.current || noteOpen,
+    () => !active || !annotationsLoaded || annotationSaving.current || noteOpen,
   );
 
   const [hoveredAnnotation, setHoveredAnnotation] =
@@ -928,6 +949,50 @@ export function Workspace({
     setImages((current) => [...current, image]);
     requestAnimationFrame(() => composeInput.current?.focus());
   };
+  // EPUB paragraphs offer the PDF block actions; image blocks are served as
+  // PNG under the same block image path.
+  const epubBlockAction = (block: EPUBReadingBlock, action: PDFBlockAction) => {
+    if (action === "copy") {
+      if (block.image)
+        void copyImage(blockImageURL(doc.id, block.id), block.text.trim());
+      else void copyText(block.text.trim(), "已复制");
+      return;
+    }
+    if (!block.image) {
+      if (action === "explain")
+        void send("请解释这段原文的含义，区分原文结论与你的补充说明。", [
+          {
+            text: block.text,
+            location: { ...block.location, quote: block.text },
+          },
+        ]);
+      return;
+    }
+    const image: ImageAttachment = {
+      id: block.id,
+      page: 0,
+      label: block.label,
+      caption: block.text || undefined,
+    };
+    if (action === "preview") {
+      setPreviewImage(image);
+      return;
+    }
+    if (action !== "explain") return;
+    if (sending) {
+      toast.info("请等待当前回答完成");
+      return;
+    }
+    setRight(true);
+    setRightTab("ai");
+    void send(
+      "请详细解释这张插图，说明图中信息及其在书中的含义，区分事实与推断。",
+      [],
+      false,
+      [image],
+      true,
+    );
+  };
   const imageAttachments = (items: ImageAttachment[], removable = false) => (
     <div className="image-attachments">
       {items.map((image) => (
@@ -999,6 +1064,42 @@ export function Workspace({
       </IconButton>
     </div>
   );
+  const closeState = useRef({ busy: false, draft: false, saving: false });
+  closeState.current = {
+    busy: chat.busy || sending,
+    draft:
+      !!prompt.trim() ||
+      quotes.length > 0 ||
+      images.length > 0 ||
+      (noteOpen && !!note.trim()),
+    saving: noteSaving || annotationSaving.current,
+  };
+  useEffect(
+    () =>
+      registerTabCloseGuard(doc.id, () => {
+        if (closeState.current.saving)
+          return {
+            blocked: true,
+            message: "批注正在保存，请保存完成后再关闭。",
+          };
+        if (closeState.current.busy || closeState.current.draft)
+          return {
+            message:
+              "关闭后会清除未发送的问题、附件和未保存的批注。已保存的阅读记录与对话会保留，后台回答会继续，可重新打开查看。",
+          };
+        return null;
+      }),
+    [doc.id],
+  );
+  useEffect(() => {
+    if (active) return;
+    adapter?.clearSelection();
+    setSelection(null);
+    setTranslationSelection(null);
+    setLinkPreview(null);
+    setAnnotationTarget(null);
+    void flushProgress().catch((e) => toast.error(e.message));
+  }, [active, adapter]);
   return (
     <div className="workspace">
       <header className="neoread-toolbar">
@@ -1021,6 +1122,9 @@ export function Workspace({
           >
             <PanelLeft />
           </IconButton>
+          <IconButton label="文档概要" onClick={() => setOverviewOpen(true)}>
+            <BookOpen />
+          </IconButton>
           <span className="toolbar-divider" />
           <span className="neoread-title" title={doc.title}>
             {doc.title}
@@ -1039,9 +1143,6 @@ export function Workspace({
               返回阅读位置
             </Button>
           )}
-          <IconButton label="文档概要" onClick={() => setOverviewOpen(true)}>
-            <BookOpen />
-          </IconButton>
           <div ref={setReadingToolbar} data-tour="reading-modes" />
           <span className="toolbar-divider" />
           <div ref={setSourceAutoCenterToolbar} />
@@ -1375,6 +1476,7 @@ export function Workspace({
                 doc.type === "pdf" ? PDFReadingView : EPUBReadingView;
               return (
                 <ReadingView
+                  active={active}
                   sidebarsOpen={{ left, right }}
                   document={doc}
                   theme={theme}
@@ -1409,6 +1511,7 @@ export function Workspace({
                       setReturnLocation(navigationRef.current?.origin);
                     },
                     blockAction,
+                    epubBlockAction,
                   }}
                 />
               );
@@ -1771,20 +1874,6 @@ export function Workspace({
                   onResolve={(a, resolved) => void resolveQuestion(a, resolved)}
                   onShowAnswer={showAnswer}
                   onExport={() => setExportingNotes(true)}
-                  onRecover={async () => {
-                    try {
-                      const result = await api.recoverAnnotations(doc.id, true);
-                      if (!result.checked) {
-                        toast.error("请等待文档解析和翻译完成后再定位批注");
-                        return;
-                      }
-                      const items = await api.annotations(doc.id);
-                      if (recoveryDocument.current === doc.id)
-                        setAnnotations(items);
-                    } catch (e) {
-                      toast.error((e as Error).message);
-                    }
-                  }}
                 />
               </TabsContent>
             </Tabs>
@@ -1794,17 +1883,17 @@ export function Workspace({
 
       <SelectionTranslation
         key={doc.id}
-        selection={translationSelection}
+        selection={active ? translationSelection : null}
         onClose={() => setTranslationSelection(null)}
       />
       <AnnotationHoverCard
-        target={!selection && !noteOpen ? hoveredAnnotation : null}
+        target={active && !selection && !noteOpen ? hoveredAnnotation : null}
         annotations={annotations}
         onEdit={editAnnotationNote}
       />
       <LinkPreviewPanel
         key={doc.id}
-        preview={linkPreview}
+        preview={active ? linkPreview : null}
         onDismiss={() => setLinkPreview(null)}
         onNavigate={(location) =>
           void visitReference(location, "").catch((error) =>
@@ -1813,7 +1902,7 @@ export function Workspace({
         }
         renderKey={`${theme.mode}:${theme.pdfDarkContrast}`}
       />
-      {previewImage && (
+      {active && previewImage && (
         <ImagePreview
           key={previewImage.id}
           documentId={doc.id}
@@ -1823,7 +1912,7 @@ export function Workspace({
         />
       )}
       <Dialog
-        open={noteOpen}
+        open={active && noteOpen}
         onOpenChange={(open) => {
           if (noteSaving) return;
           setNoteOpen(open);
@@ -1905,7 +1994,7 @@ export function Workspace({
           )}
         </DialogContent>
       </Dialog>
-      {exportingNotes && (
+      {active && exportingNotes && (
         <ExportDocumentDialog
           key={`export-${doc.id}`}
           document={doc}
@@ -1917,14 +2006,14 @@ export function Workspace({
       )}
       <DocumentOverviewDialog
         key={doc.id}
-        document={overviewOpen ? doc : null}
+        document={active && overviewOpen ? doc : null}
         onClose={() => setOverviewOpen(false)}
         onNavigate={async (location) => {
           await adapter?.goTo(location);
         }}
       />
       <ProcessingUsageDialog
-        document={usageOpen ? doc : null}
+        document={active && usageOpen ? doc : null}
         onClose={() => setUsageOpen(false)}
       />
     </div>

@@ -25,6 +25,7 @@ import { agentPath } from "./agent-path";
 import { codexThreadURL } from "../../../packages/neoread-core/src/codex-link";
 import { annotationUndoShortcut } from "../../../packages/neoread-core/src/undo-shortcut";
 import { zoomCommand } from "../../../packages/neoread-core/src/zoom-shortcut";
+import { documentTabCommand } from "../../../packages/neoread-core/src/document-tab-shortcut";
 import {
   LINK_SCHEMES,
   parseNeoReadLink,
@@ -47,6 +48,7 @@ import { startDiagnosticService } from "./diagnostic-service";
 import { serverSpawnDiagnostics } from "./server-spawn-diagnostics";
 import { discoverEndNote } from "./endnote-discovery";
 import { commandLineStatus, setCommandLine } from "./command-line";
+import { createCitationWindow } from "./citation-window";
 import {
   citePluginStatus,
   installCitePlugin,
@@ -70,6 +72,7 @@ let child: ChildProcess | undefined;
 let serverURL = "";
 let serverToken = "";
 let window: BrowserWindow | undefined;
+let documentTabActive = false;
 let quitting = false;
 let closing = false;
 let flushed = false;
@@ -550,16 +553,26 @@ app
     });
     // Let the renderer handle reading shortcuts; editable fields keep native undo.
     window.webContents.on("before-input-event", (_event, input) => {
+      const tabCommand = documentTabCommand({
+        key: input.key,
+        metaKey: input.meta,
+        ctrlKey: input.control,
+        shiftKey: input.shift,
+        altKey: input.alt,
+        isComposing: input.isComposing,
+      });
       window?.webContents.setIgnoreMenuShortcuts(
         input.type === "keyDown" &&
-          (annotationUndoShortcut({
-            key: input.key,
-            metaKey: input.meta,
-            ctrlKey: input.control,
-            shiftKey: input.shift,
-            altKey: input.alt,
-            isComposing: input.isComposing,
-          }) ||
+          ((tabCommand !== null &&
+            (documentTabActive || tabCommand.type === "reopen")) ||
+            annotationUndoShortcut({
+              key: input.key,
+              metaKey: input.meta,
+              ctrlKey: input.control,
+              shiftKey: input.shift,
+              altKey: input.alt,
+              isComposing: input.isComposing,
+            }) ||
             ((input.meta || input.control) &&
               !input.shift &&
               !input.alt &&
@@ -604,6 +617,11 @@ app
     ipcMain.handle("neoread:library-warning", (event) => {
       settingsSender(event);
       return libraryWarning;
+    });
+    ipcMain.handle("neoread:document-tab-active", (event, active: unknown) => {
+      settingsSender(event);
+      if (typeof active !== "boolean") throw new Error("Invalid tab state");
+      documentTabActive = active;
     });
     ipcMain.handle("neoread:import-library", async (event) => {
       settingsSender(event);
@@ -784,6 +802,16 @@ app
       home: homedir(),
       appData: app.getPath("appData"),
       plugins: citePluginsDirectory(),
+      requestFolderAccess: async (folder: string) => {
+        const selected = await dialog.showOpenDialog(window!, {
+          title: "允许访问 Word 插件文件夹",
+          message: "请选择当前文件夹，允许 NeoRead 安装或移除 Word 引用插件。",
+          buttonLabel: "允许访问",
+          defaultPath: folder,
+          properties: ["openDirectory"],
+        });
+        return selected.canceled ? null : selected.filePaths[0] || null;
+      },
     });
     const citeKind = (kind: unknown): CitePluginKind => {
       if (kind !== "word" && kind !== "wps") throw new Error("Invalid plugin");
@@ -802,7 +830,35 @@ app
     });
     ipcMain.handle("neoread:cite-plugin-install", async (event, kind) => {
       fromWindow(event);
-      await installCitePlugin(citeKind(kind), citeOptions());
+      const plugin = citeKind(kind);
+      const started = Date.now();
+      diagnostics?.logs.record("desktop", {
+        level: "info",
+        event: "cite_plugin.install_start",
+        kind: plugin,
+      });
+      try {
+        await installCitePlugin(plugin, citeOptions());
+        diagnostics?.logs.record("desktop", {
+          level: "info",
+          event: "cite_plugin.install_finish",
+          kind: plugin,
+          durationMs: Date.now() - started,
+        });
+      } catch (error) {
+        const cause = (error as Error).cause || error;
+        const code = (cause as NodeJS.ErrnoException).code;
+        diagnostics?.logs.record("desktop", {
+          level: "error",
+          event: "cite_plugin.install_failed",
+          kind: plugin,
+          durationMs: Date.now() - started,
+          errorCode: ["EPERM", "EACCES", "EBUSY", "ENOENT"].includes(code || "")
+            ? code
+            : "install",
+        });
+        throw error;
+      }
       return citePluginStatus(citeOptions());
     });
     ipcMain.handle("neoread:cite-plugin-uninstall", async (event, kind) => {
@@ -958,6 +1014,12 @@ app
     await window.loadURL(
       `${url}/${recoveryServer ? "?libraryRecovery=1" : ""}#token=${serverToken}`,
     );
+    if (!recoveryServer)
+      await createCitationWindow({
+        url,
+        token: serverToken,
+        preload: join(__dirname, "preload.cjs"),
+      });
     if (migration && !recoveryServer)
       await promptLegacyCleanup(
         window,

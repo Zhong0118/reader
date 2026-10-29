@@ -1,31 +1,42 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { TranslationBlock } from "@neoread/core";
 import { api } from "@neoread/api";
-export function useTranslations(documentId: string) {
+export function useTranslations(documentId: string, hrefs?: string[]) {
   const [translations, setTranslations] = useState<TranslationBlock[]>([]);
   const [error, setError] = useState("");
+  const scope = hrefs?.join("\0");
+  const previousDocument = useRef<string | undefined>(undefined);
   useEffect(() => {
-    setTranslations([]);
+    if (previousDocument.current !== documentId || scope === "")
+      setTranslations([]);
+    previousDocument.current = documentId;
     setError("");
+    if (scope === "") return;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let retryDelay = 500;
     const subscribe = async () => {
       try {
-        await api.translationStream(documentId, controller.signal, (event) => {
-          if (controller.signal.aborted) return;
-          retryDelay = 500;
-          setError("");
-          if (event.event === "snapshot") setTranslations(event.data);
-          else
-            setTranslations((current) => {
-              const index = current.findIndex(
-                (b) => b.blockId === event.data.blockId,
-              );
-              if (index < 0) return [...current, event.data];
-              return current.map((b, i) => (i === index ? event.data : b));
-            });
-        });
+        await api.translationStream(
+          documentId,
+          controller.signal,
+          (event) => {
+            if (controller.signal.aborted) return;
+            retryDelay = 500;
+            setError("");
+            if (event.event === "snapshot") setTranslations(event.data);
+            else {
+              setTranslations((current) => {
+                const index = current.findIndex(
+                  (b) => b.blockId === event.data.blockId,
+                );
+                if (index < 0) return [...current, event.data];
+                return current.map((b, i) => (i === index ? event.data : b));
+              });
+            }
+          },
+          scope?.split("\0"),
+        );
       } catch (e) {
         if (!controller.signal.aborted) setError((e as Error).message);
       } finally {
@@ -40,6 +51,6 @@ export function useTranslations(documentId: string) {
       controller.abort();
       clearTimeout(timer);
     };
-  }, [documentId]);
+  }, [documentId, scope]);
   return { translations, error };
 }
